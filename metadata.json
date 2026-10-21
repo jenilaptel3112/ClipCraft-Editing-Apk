@@ -1,0 +1,6 @@
+{
+  "name": "ClipCraft Studio",
+  "description": "High-performance mobile-first multi-track video editing studio with real-time HTML5 Canvas compositing, color grading LUTs, keyframe animation, kinetic typography, speed ramping, and WebM/MP4 export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
