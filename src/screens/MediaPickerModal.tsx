@@ -13,6 +13,7 @@ import { useProject } from '../context/ProjectContext';
 import { AspectRatio, TimelineClip, ProjectSettings } from '../types/editor';
 import { DEFAULT_COLOR_GRADING, createDefaultProjectSettings } from '../utils/presets';
 import { ProjectSettingsModal } from '../components/ProjectSettingsModal';
+import { useMediaImporter } from '../hooks/useMediaImporter';
 
 interface MockMediaAsset {
   id: string;
@@ -23,6 +24,8 @@ interface MockMediaAsset {
   previewGradient: string;
   file?: File;
   objectUrl?: string;
+  waveform?: number[];
+  isLongDuration?: boolean;
 }
 
 const STOCK_CANVASES: MockMediaAsset[] = [
@@ -72,6 +75,8 @@ export const MediaPickerModal: React.FC = () => {
   const [userUploadedAssets, setUserUploadedAssets] = useState<MockMediaAsset[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const { toastNotice, clearToast, importMediaFile } = useMediaImporter();
+
   // Toggle selection with numbered badges (1, 2, 3...)
   const toggleSelectAsset = (id: string) => {
     setSelectedAssetIds((prev) => {
@@ -83,27 +88,34 @@ export const MediaPickerModal: React.FC = () => {
     });
   };
 
-  // Handle local user files upload
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle local user files upload via non-blocking useMediaImporter
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    const newAssets: MockMediaAsset[] = Array.from(files).map((file, idx) => {
-      const isVideo = file.type.startsWith('video/');
-      const objectUrl = URL.createObjectURL(file);
-      return {
-        id: `user-upload-${Date.now()}-${idx}`,
-        type: isVideo ? 'video' : 'image',
-        name: file.name,
-        duration: 4.0,
-        previewGradient: isVideo ? 'from-blue-600 to-indigo-800' : 'from-purple-600 to-pink-800',
-        file,
-        objectUrl,
-      };
-    });
+    const fileList = Array.from(files);
+    const newAssets: MockMediaAsset[] = [];
+
+    for (let idx = 0; idx < fileList.length; idx++) {
+      const file = fileList[idx];
+      const result = await importMediaFile(file);
+      if (result) {
+        newAssets.push({
+          id: `user-upload-${Date.now()}-${idx}`,
+          type: result.mediaType === 'image' ? 'image' : 'video',
+          name: file.name,
+          duration: result.duration,
+          previewGradient:
+            result.mediaType === 'video' ? 'from-blue-600 to-indigo-800' : 'from-purple-600 to-pink-800',
+          file,
+          objectUrl: result.objectUrl,
+          waveform: result.waveform,
+          isLongDuration: result.isLongDuration,
+        });
+      }
+    }
 
     setUserUploadedAssets((prev) => [...newAssets, ...prev]);
-    // Auto select newly uploaded assets
     setSelectedAssetIds((prev) => [...prev, ...newAssets.map((a) => a.id)]);
     e.target.value = '';
   };
@@ -119,19 +131,24 @@ export const MediaPickerModal: React.FC = () => {
     const initialClips: TimelineClip[] = orderedSelected.map((asset, index) => {
       const clipDuration = asset.duration || 4.5;
       const start = cumulativeStart;
-      cumulativeStart += clipDuration;
+      const durationOnTimeline = Math.min(clipDuration, 60);
+      cumulativeStart += durationOnTimeline;
+      const clipId = `clip-video-${Date.now()}-${index}`;
 
       return {
-        id: `clip-video-${Date.now()}-${index}`,
+        id: clipId,
+        sourceId: clipId,
+        isLongDuration: asset.isLongDuration,
         trackId: 'video',
         name: asset.name,
         startTime: +start.toFixed(2),
-        duration: clipDuration,
+        duration: durationOnTimeline,
         sourceStartOffset: 0,
-        sourceMaxDuration: 30,
+        sourceMaxDuration: asset.duration || 30,
         mediaType: asset.type === 'synthetic' ? 'synthetic' : asset.type === 'image' ? 'image' : 'video',
         syntheticScene: asset.syntheticScene,
         mediaUrl: asset.objectUrl,
+        waveform: asset.waveform,
         accentColor: '#3B82F6',
         x: 0,
         y: 0,
@@ -179,7 +196,28 @@ export const MediaPickerModal: React.FC = () => {
         className="hidden"
       />
 
-      <div className="w-full h-[88dvh] max-h-[720px] bg-[#12141F] rounded-t-3xl border-t border-white/10 flex flex-col overflow-hidden shadow-2xl animate-slide-up">
+      <div className="w-full h-[88dvh] max-h-[720px] bg-[#12141F] rounded-t-3xl border-t border-white/10 flex flex-col overflow-hidden shadow-2xl animate-slide-up relative">
+        {/* Toast Notice Banner for Large File Ingestion */}
+        {toastNotice && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 max-w-sm w-11/12 bg-[#12141C]/95 border border-amber-500/40 text-white p-2.5 rounded-2xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-2.5 animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                <Film className="w-3.5 h-3.5" />
+              </div>
+              <div className="min-w-0">
+                <h5 className="text-[11px] font-bold text-amber-300 truncate">{toastNotice.title}</h5>
+                <p className="text-[10px] text-slate-300 leading-tight">{toastNotice.message}</p>
+              </div>
+            </div>
+            <button
+              onClick={clearToast}
+              className="p-1 rounded-md hover:bg-white/10 text-slate-400 hover:text-white shrink-0 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Top Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] shrink-0">
           <div className="flex items-center gap-2">

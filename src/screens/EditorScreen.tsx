@@ -5,7 +5,11 @@ import {
   Download,
   ArrowLeft,
   Settings,
+  X,
+  Film,
 } from 'lucide-react';
+import { useMediaImporter } from '../hooks/useMediaImporter';
+import { proxyManager } from '../utils/proxyManager';
 import {
   AspectRatio,
   FitMode,
@@ -73,6 +77,7 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
   });
 
   const [isProjectSettingsOpen, setIsProjectSettingsOpen] = useState<boolean>(false);
+  const { toastNotice, clearToast, importMediaFile } = useMediaImporter();
 
   // Viewport & Aspect Ratio State from active project
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(
@@ -642,43 +647,49 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
     [currentTimeRef, clips, commitHistory]
   );
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const objectUrl = URL.createObjectURL(file);
     const clipId = `clip-upload-${Date.now()}`;
-    const isAudio = file.type.startsWith('audio/');
-    const isImage = file.type.startsWith('image/');
-    const targetTrack = isAudio ? 'audio' : 'video';
+    const result = await importMediaFile(file);
+    if (!result) return;
 
-    if (isImage) {
+    const targetTrack = result.mediaType === 'audio' ? 'audio' : 'video';
+
+    if (result.mediaType === 'image') {
       const img = new Image();
-      img.src = objectUrl;
+      img.src = result.objectUrl;
       mediaElementsRef.current.set(clipId, img);
-    } else if (!isAudio) {
+    } else if (result.mediaType === 'video') {
       const video = document.createElement('video');
-      video.src = objectUrl;
+      video.src = result.objectUrl;
       video.crossOrigin = 'anonymous';
       video.playsInline = true;
-      video.preload = 'auto';
-      video.load();
+      video.preload = 'metadata'; // Never load full 2-hour file into memory
       mediaElementsRef.current.set(clipId, video);
+      proxyManager.registerMedia(clipId, file, result.objectUrl, result.width, result.height);
+      proxyManager.registerOriginalElement(clipId, video);
     } else {
-      const audio = new Audio(objectUrl);
-      audio.preload = 'auto';
+      const audio = new Audio(result.objectUrl);
+      audio.preload = 'metadata';
       audioElementsRef.current.set(clipId, audio);
     }
 
+    // Default clip length: for very long files, give a comfortable 60s working slice or full duration
+    const clipDuration = Math.min(result.duration, 60);
+
     const newClip: TimelineClip = {
       id: clipId,
+      sourceId: clipId,
+      isLongDuration: result.isLongDuration,
       trackId: targetTrack,
       name: file.name,
       startTime: +currentTimeRef.current.toFixed(2),
-      duration: 5.0,
+      duration: clipDuration,
       sourceStartOffset: 0,
-      sourceMaxDuration: 30,
-      mediaType: isAudio ? 'audio' : isImage ? 'image' : 'video',
-      mediaUrl: objectUrl,
+      sourceMaxDuration: result.duration,
+      mediaType: result.mediaType,
+      mediaUrl: result.objectUrl,
       accentColor: targetTrack === 'audio' ? '#10B981' : '#3B82F6',
       x: 0,
       y: 0,
@@ -695,7 +706,7 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
       muted: false,
       fadeIn: 0.2,
       fadeOut: 0.2,
-      waveform: isAudio ? [0.4, 0.7, 0.85, 0.6, 0.9, 0.5, 0.75, 0.8] : undefined,
+      waveform: result.waveform,
     };
 
     commitHistory([...clips, newClip]);
@@ -716,6 +727,27 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
         onChange={handleFileChange}
         className="hidden"
       />
+
+      {/* Toast Notice Banner for Large File Ingestion & Memory Safeguards */}
+      {toastNotice && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 max-w-sm w-11/12 bg-[#12141C]/95 border border-amber-500/40 text-white p-3 rounded-2xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-200">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+              <Film className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h5 className="text-xs font-bold text-amber-300 truncate">{toastNotice.title}</h5>
+              <p className="text-[11px] text-slate-300 leading-tight">{toastNotice.message}</p>
+            </div>
+          </div>
+          <button
+            onClick={clearToast}
+            className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white shrink-0 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* TOP BAR: Back arrow to Dashboard, Project Title, Settings Button, Aspect Ratio and Export */}
       <header className="flex items-center justify-between px-3 py-2 bg-[#0F1118] border-b border-white/[0.08] shrink-0 z-20">

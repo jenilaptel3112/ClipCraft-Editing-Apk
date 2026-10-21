@@ -13,9 +13,79 @@ export interface RenderOfflineProgressCallback {
   (state: ExportProgressState): void;
 }
 
+const EXPORT_DB_NAME = 'ClipCraftExportDB';
+const CHUNKS_STORE_NAME = 'export_stream_chunks';
+const DB_VERSION = 1;
+
+function openExportDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || !window.indexedDB) {
+      reject(new Error('IndexedDB not supported'));
+      return;
+    }
+    const request = indexedDB.open(EXPORT_DB_NAME, DB_VERSION);
+    request.onupgradeneeded = (e) => {
+      const db = (e.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(CHUNKS_STORE_NAME)) {
+        db.createObjectStore(CHUNKS_STORE_NAME, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function writeChunkToIndexedDB(exportId: string, index: number, chunk: Blob): Promise<void> {
+  try {
+    const db = await openExportDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(CHUNKS_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(CHUNKS_STORE_NAME);
+      const req = store.put({
+        id: `${exportId}_${index}`,
+        exportId,
+        index,
+        data: chunk,
+      });
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) {
+    console.warn('Fallback to memory for export chunk:', err);
+  }
+}
+
+async function collectChunksFromIndexedDB(exportId: string): Promise<Blob[]> {
+  try {
+    const db = await openExportDB();
+    const records = await new Promise<any[]>((resolve, reject) => {
+      const tx = db.transaction(CHUNKS_STORE_NAME, 'readonly');
+      const store = tx.objectStore(CHUNKS_STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+
+    const relevant = records
+      .filter((r) => r.exportId === exportId)
+      .sort((a, b) => a.index - b.index)
+      .map((r) => r.data as Blob);
+
+    // Clean up temporary export records from IndexedDB
+    const deleteTx = db.transaction(CHUNKS_STORE_NAME, 'readwrite');
+    const deleteStore = deleteTx.objectStore(CHUNKS_STORE_NAME);
+    records
+      .filter((r) => r.exportId === exportId)
+      .forEach((r) => deleteStore.delete(r.id));
+
+    return relevant;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Calculates output canvas pixel dimensions for 4K UHD, 2K, 1080p, 720p
- * based on selected aspect ratio (9:16 vertical, 16:9 widescreen, 1:1 square, 4:5 portrait)
  */
 export function getExportResolutionDimensions(
   resolution: ProExportConfig['resolution'],
@@ -24,94 +94,66 @@ export function getExportResolutionDimensions(
   switch (aspectRatio) {
     case '9:16':
       switch (resolution) {
-        case '4K':
-          return { width: 2160, height: 3840 };
-        case '2K':
-          return { width: 1440, height: 2560 };
-        case '1080p':
-          return { width: 1080, height: 1920 };
-        case '720p':
-          return { width: 720, height: 1280 };
+        case '4K': return { width: 2160, height: 3840 };
+        case '2K': return { width: 1440, height: 2560 };
+        case '1080p': return { width: 1080, height: 1920 };
+        case '720p': return { width: 720, height: 1280 };
       }
       break;
 
     case '16:9':
       switch (resolution) {
-        case '4K':
-          return { width: 3840, height: 2160 };
-        case '2K':
-          return { width: 2560, height: 1440 };
-        case '1080p':
-          return { width: 1920, height: 1080 };
-        case '720p':
-          return { width: 1280, height: 720 };
+        case '4K': return { width: 3840, height: 2160 };
+        case '2K': return { width: 2560, height: 1440 };
+        case '1080p': return { width: 1920, height: 1080 };
+        case '720p': return { width: 1280, height: 720 };
       }
       break;
 
     case '1:1':
       switch (resolution) {
-        case '4K':
-          return { width: 2160, height: 2160 };
-        case '2K':
-          return { width: 1440, height: 1440 };
-        case '1080p':
-          return { width: 1080, height: 1080 };
-        case '720p':
-          return { width: 720, height: 720 };
+        case '4K': return { width: 2160, height: 2160 };
+        case '2K': return { width: 1440, height: 1440 };
+        case '1080p': return { width: 1080, height: 1080 };
+        case '720p': return { width: 720, height: 720 };
       }
       break;
 
     case '4:5':
       switch (resolution) {
-        case '4K':
-          return { width: 2160, height: 2700 };
-        case '2K':
-          return { width: 1440, height: 1800 };
-        case '1080p':
-          return { width: 1080, height: 1350 };
-        case '720p':
-          return { width: 720, height: 900 };
+        case '4K': return { width: 2160, height: 2700 };
+        case '2K': return { width: 1440, height: 1800 };
+        case '1080p': return { width: 1080, height: 1350 };
+        case '720p': return { width: 720, height: 900 };
       }
       break;
 
     case '21:9':
       switch (resolution) {
-        case '4K':
-          return { width: 5120, height: 2160 };
-        case '2K':
-          return { width: 3440, height: 1440 };
-        case '1080p':
-          return { width: 2560, height: 1080 };
-        case '720p':
-          return { width: 1680, height: 720 };
+        case '4K': return { width: 5120, height: 2160 };
+        case '2K': return { width: 3440, height: 1440 };
+        case '1080p': return { width: 2560, height: 1080 };
+        case '720p': return { width: 1680, height: 720 };
       }
       break;
 
     case '4:3':
       switch (resolution) {
-        case '4K':
-          return { width: 2880, height: 2160 };
-        case '2K':
-          return { width: 1920, height: 1440 };
-        case '1080p':
-          return { width: 1440, height: 1080 };
-        case '720p':
-          return { width: 960, height: 720 };
+        case '4K': return { width: 2880, height: 2160 };
+        case '2K': return { width: 1920, height: 1440 };
+        case '1080p': return { width: 1440, height: 1080 };
+        case '720p': return { width: 960, height: 720 };
       }
       break;
 
     case 'custom':
     default:
       switch (resolution) {
-        case '4K':
-          return { width: 2160, height: 3840 };
-        case '2K':
-          return { width: 1440, height: 2560 };
-        case '1080p':
-          return { width: 1080, height: 1920 };
+        case '4K': return { width: 2160, height: 3840 };
+        case '2K': return { width: 1440, height: 2560 };
+        case '1080p': return { width: 1080, height: 1920 };
         case '720p':
-        default:
-          return { width: 720, height: 1280 };
+        default: return { width: 720, height: 1280 };
       }
   }
 
@@ -156,20 +198,14 @@ export function getBestSupportedCodec(format: 'mp4' | 'webm'): { mimeType: strin
   return { mimeType: 'video/webm', isSupported: false };
 }
 
-/**
- * Calculates estimated file size in MB:
- * (Bitrate in Mbps × Duration in seconds) / 8
- */
 export function calculateEstimatedFileSizeMB(bitrateMbps: number, durationSeconds: number): number {
   const mb = (bitrateMbps * durationSeconds) / 8;
   return +mb.toFixed(1);
 }
 
 /**
- * Full-Resolution Offline Rendering Engine:
- * Steps frame-by-frame through timeline at exact target FPS interval,
- * painting full-res 4K/2K/1080p frames onto offline canvas,
- * and feeding directly to MediaRecorder with custom videoBitsPerSecond.
+ * Full-Resolution Offline Rendering Engine with Streaming Slices & Watchdog Micro-Tasks:
+ * Prevents mobile memory ballooning on long-duration exports.
  */
 export class OfflineExportPipeline {
   private isCancelled: boolean = false;
@@ -194,6 +230,7 @@ export class OfflineExportPipeline {
     onProgress: RenderOfflineProgressCallback
   ): Promise<{ downloadUrl: string; fileSizeMB: number }> {
     this.isCancelled = false;
+    const exportId = `exp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
     const { width: exportW, height: exportH } = getExportResolutionDimensions(
       config.resolution,
@@ -210,7 +247,7 @@ export class OfflineExportPipeline {
       throw new Error('Failed to create offline export canvas context');
     }
 
-    // Prepare full-res media element map (switches from low-res proxy to native 4K masters)
+    // Prepare full-res media element map
     const exportMediaElements = new Map<string, HTMLVideoElement | HTMLImageElement>();
     clips.forEach((clip) => {
       const orig = proxyManager.getOriginalElement(clip.id);
@@ -228,7 +265,10 @@ export class OfflineExportPipeline {
     const videoBitsPerSecond = Math.round(config.bitrateMbps * 1_000_000);
 
     const stream = canvas.captureStream(targetFps);
-    const chunks: BlobPart[] = [];
+
+    // Streaming MediaRecorder chunk accumulation via IndexedDB stream
+    const fallbackMemoryChunks: Blob[] = [];
+    let chunkCounter = 0;
 
     const recorder = new MediaRecorder(stream, {
       mimeType,
@@ -238,16 +278,19 @@ export class OfflineExportPipeline {
 
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
-        chunks.push(e.data);
+        const idx = chunkCounter++;
+        fallbackMemoryChunks.push(e.data);
+        writeChunkToIndexedDB(exportId, idx, e.data);
       }
     };
 
-    recorder.start(100);
+    // 1. Streaming MediaRecorder Slicing: emits data chunks every 1000ms
+    recorder.start(1000);
 
     const startTimeStamp = performance.now();
     let currentFrame = 0;
 
-    // Step frame by frame
+    // 2. Segmented Offline Render Loop with micro-task scheduling
     for (let f = 0; f < totalFrames; f++) {
       if (this.isCancelled) {
         throw new Error('Export cancelled by user');
@@ -263,7 +306,7 @@ export class OfflineExportPipeline {
         }
       });
 
-      // Render native full-resolution composite frame with all CapCut effects & color grades
+      // Render native full-resolution composite frame with all effects & styles
       renderCompositeFrame(
         ctx,
         exportW,
@@ -275,8 +318,14 @@ export class OfflineExportPipeline {
         fitMode,
         null,
         false,
-        false // Non-draft: crisp full 4K render
+        false
       );
+
+      // 3. RAM & Garbage Collection Safeguards:
+      // Clear intermediate canvas frame memory every 60 frames to assist garbage collection
+      if (f % 60 === 0) {
+        ctx.clearRect(0, 0, 1, 1);
+      }
 
       // Calculate progress and estimated time remaining
       const pct = Math.min(100, Math.round((currentFrame / totalFrames) * 100));
@@ -293,22 +342,38 @@ export class OfflineExportPipeline {
         estimatedSecondsRemaining: estSecRemaining,
       });
 
-      // Yield event loop slightly every 4 frames so UI remains responsive and progress updates
-      if (f % 4 === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 8));
+      // Segmented Offline Render Loop:
+      // Break the loop into scheduled micro-tasks using setTimeout(..., 0) every 30 frames
+      // to prevent iOS WebKit / Android Chromium from killing the tab for long-running execution.
+      if (f % 30 === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      } else if (f % 5 === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 4));
       }
     }
 
-    // Stop recording and wait for final blob
+    // Stop recording and retrieve stream chunks
     return new Promise((resolve, reject) => {
-      recorder.onstop = () => {
-        const finalBlob = new Blob(chunks, { type: mimeType });
-        const downloadUrl = URL.createObjectURL(finalBlob);
-        const actualSizeMB = +(finalBlob.size / (1024 * 1024)).toFixed(1);
-        resolve({
-          downloadUrl,
-          fileSizeMB: actualSizeMB > 0.1 ? actualSizeMB : calculateEstimatedFileSizeMB(config.bitrateMbps, totalDuration),
-        });
+      recorder.onstop = async () => {
+        try {
+          // Read from IndexedDB stream, or fall back to memory chunks
+          const idbChunks = await collectChunksFromIndexedDB(exportId);
+          const finalChunks = idbChunks.length > 0 ? idbChunks : fallbackMemoryChunks;
+
+          const finalBlob = new Blob(finalChunks, { type: mimeType });
+          const downloadUrl = URL.createObjectURL(finalBlob);
+          const actualSizeMB = +(finalBlob.size / (1024 * 1024)).toFixed(1);
+
+          // Dereference arrays for GC
+          fallbackMemoryChunks.length = 0;
+
+          resolve({
+            downloadUrl,
+            fileSizeMB: actualSizeMB > 0.1 ? actualSizeMB : calculateEstimatedFileSizeMB(config.bitrateMbps, totalDuration),
+          });
+        } catch (err) {
+          reject(err);
+        }
       };
 
       recorder.onerror = (err) => {

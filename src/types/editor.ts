@@ -258,6 +258,8 @@ export interface TimelineClip {
   name: string;
   startTime: number;      // Start position on timeline (seconds)
   duration: number;       // Visible duration on timeline (seconds)
+  sourceId?: string;       // Master long file source reference for virtual sub-clipping
+  isLongDuration?: boolean; // Flagged if file duration > 300s
   sourceStartOffset: number; // Trim in-point in media source (seconds)
   sourceMaxDuration: number; // Total available media duration
   mediaType: 'synthetic' | 'video' | 'image' | 'audio' | 'text' | 'null' | 'camera' | 'drawing';

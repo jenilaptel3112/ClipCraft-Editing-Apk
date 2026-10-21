@@ -70,7 +70,16 @@ export function useTimelinePlayback({
 
           if (isClipActive) {
             if (isScrubbing || Math.abs(mediaEl.currentTime - localSourceTime) > 0.08) {
-              mediaEl.currentTime = Math.max(0, localSourceTime);
+              const safeTime = Math.max(0, localSourceTime);
+              if (isScrubbing && 'fastSeek' in mediaEl && typeof (mediaEl as any).fastSeek === 'function') {
+                try {
+                  (mediaEl as any).fastSeek(safeTime);
+                } catch {
+                  if (!mediaEl.seeking) mediaEl.currentTime = safeTime;
+                }
+              } else if (!mediaEl.seeking || !isScrubbing) {
+                mediaEl.currentTime = safeTime;
+              }
             }
             if (playing && !isScrubbing && mediaEl.paused) {
               mediaEl.play().catch(() => {});
