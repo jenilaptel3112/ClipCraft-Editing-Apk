@@ -1,4 +1,4 @@
-import { TimelineClip, TrackMeta, ColorGrading, EasingType, Keyframe } from '../types/editor';
+import { TimelineClip, TrackMeta, ColorGrading, EasingType, Keyframe, TextStyle } from '../types/editor';
 
 export const DEFAULT_COLOR_GRADING: ColorGrading = {
   brightness: 100,
@@ -9,6 +9,27 @@ export const DEFAULT_COLOR_GRADING: ColorGrading = {
   vignette: 0,
   blur: 0,
   lutPreset: 'none',
+};
+
+export const DEFAULT_TEXT_STYLE: TextStyle = {
+  content: 'CAPCUT STYLE TITLE',
+  fontFamily: 'Bricolage Grotesque',
+  fontSize: 40,
+  fontWeight: '700',
+  color: '#FFFFFF',
+  strokeColor: '#000000',
+  strokeWidth: 3,
+  shadowBlur: 12,
+  shadowDistance: 3,
+  shadowColor: 'rgba(0,0,0,0.8)',
+  bgEnabled: false,
+  bgColor: '#F59E0B',
+  bgRadius: 8,
+  bgPadding: 10,
+  inAnimation: 'pop-bounce',
+  outAnimation: 'none',
+  loopAnimation: 'none',
+  presetStyle: 'bouncy-modern',
 };
 
 export const LUT_PRESETS: {
@@ -93,7 +114,9 @@ export const INITIAL_CLIPS: TimelineClip[] = [
       { id: 'kf-v1-2', timeOffset: 4.2, x: 0, y: -4, scale: 1.12, rotation: 0, opacity: 1, easing: 'ease-in-out' },
     ],
     transitionIn: { type: 'none', duration: 0.5 },
-    visualEffect: 'none',
+    activeEffects: [
+      { id: 'eff-1', type: 'camera-shake', intensity: 35, speed: 1.2, glow: 30, blur: 0 },
+    ],
     speed: 1,
     preservePitch: true,
     volume: 85,
@@ -120,7 +143,9 @@ export const INITIAL_CLIPS: TimelineClip[] = [
     colorGrading: { ...DEFAULT_COLOR_GRADING, lutPreset: 'clean-warm', warmth: 18, saturation: 115 },
     keyframes: [],
     transitionIn: { type: 'crossfade', duration: 0.8 },
-    visualEffect: 'film-grain',
+    activeEffects: [
+      { id: 'eff-2', type: 'edge-glow', intensity: 55, speed: 1.0, glow: 60, blur: 8 },
+    ],
     speed: 1,
     preservePitch: true,
     volume: 80,
@@ -150,7 +175,9 @@ export const INITIAL_CLIPS: TimelineClip[] = [
       { id: 'kf-v3-2', timeOffset: 3.8, x: 0, y: 0, scale: 1.0, rotation: 0, opacity: 1, easing: 'ease-in-out' },
     ],
     transitionIn: { type: 'zoom-in', duration: 0.7 },
-    visualEffect: 'chromatic',
+    activeEffects: [
+      { id: 'eff-3', type: 'rgb-split', intensity: 45, speed: 1.0, glow: 40, blur: 0 },
+    ],
     speed: 1,
     preservePitch: true,
     volume: 85,
@@ -179,7 +206,7 @@ export const INITIAL_CLIPS: TimelineClip[] = [
     colorGrading: { ...DEFAULT_COLOR_GRADING },
     keyframes: [],
     transitionIn: { type: 'crossfade', duration: 0.4 },
-    visualEffect: 'none',
+    activeEffects: [],
     speed: 1,
     preservePitch: true,
     volume: 0,
@@ -209,7 +236,7 @@ export const INITIAL_CLIPS: TimelineClip[] = [
       { id: 'kf-pip-2', timeOffset: 5.0, x: 20, y: -22, scale: 0.42, rotation: 3, opacity: 0.95, easing: 'ease-in-out' },
     ],
     transitionIn: { type: 'zoom-in', duration: 0.5 },
-    visualEffect: 'none',
+    activeEffects: [],
     speed: 1,
     preservePitch: true,
     volume: 0,
@@ -218,11 +245,11 @@ export const INITIAL_CLIPS: TimelineClip[] = [
     fadeOut: 0.3,
   },
 
-  // Kinetic Typography Track Clips
+  // Kinetic Typography Track Clips (CapCut Style)
   {
     id: 'clip-text-1',
     trackId: 'text',
-    name: 'Title: BEYOND HORIZON',
+    name: 'Title: VIRAL KARAOKE',
     startTime: 0.5,
     duration: 3.6,
     sourceStartOffset: 0,
@@ -237,20 +264,27 @@ export const INITIAL_CLIPS: TimelineClip[] = [
     colorGrading: { ...DEFAULT_COLOR_GRADING },
     keyframes: [],
     textStyle: {
-      content: 'BEYOND THE HORIZON',
+      content: 'VIRAL SHORTS KARAOKE CAPTIONS',
       fontFamily: 'Bricolage Grotesque',
-      fontSize: 44,
-      fontWeight: '700',
+      fontSize: 38,
+      fontWeight: '800',
       color: '#FFFFFF',
-      strokeColor: '#0B0C10',
-      strokeWidth: 3,
-      shadowBlur: 18,
+      strokeColor: '#000000',
+      strokeWidth: 4,
+      shadowBlur: 14,
+      shadowDistance: 3,
+      shadowColor: 'rgba(0,0,0,0.85)',
       bgEnabled: false,
       bgColor: '#F59E0B',
-      animation: 'pop',
+      bgRadius: 8,
+      bgPadding: 8,
+      inAnimation: 'pop-bounce',
+      outAnimation: 'none',
+      loopAnimation: 'none',
+      presetStyle: 'karaoke-active',
     },
     transitionIn: { type: 'none', duration: 0.3 },
-    visualEffect: 'none',
+    activeEffects: [],
     speed: 1,
     preservePitch: true,
     volume: 0,
@@ -261,7 +295,7 @@ export const INITIAL_CLIPS: TimelineClip[] = [
   {
     id: 'clip-text-2',
     trackId: 'text',
-    name: 'Subtitle: GOLDEN HOUR CUT',
+    name: 'Subtitle: BOUNCY YELLOW',
     startTime: 4.8,
     duration: 3.8,
     sourceStartOffset: 0,
@@ -276,65 +310,33 @@ export const INITIAL_CLIPS: TimelineClip[] = [
     colorGrading: { ...DEFAULT_COLOR_GRADING },
     keyframes: [],
     textStyle: {
-      content: 'SHOT IN 4K ANAMORPHIC',
+      content: 'SHOT IN 4K CINEMA LOG',
       fontFamily: 'Plus Jakarta Sans',
       fontSize: 28,
       fontWeight: '700',
       color: '#0B0C10',
       strokeColor: '#000000',
       strokeWidth: 0,
-      shadowBlur: 10,
+      shadowBlur: 8,
+      shadowDistance: 2,
+      shadowColor: 'rgba(0,0,0,0.6)',
       bgEnabled: true,
       bgColor: '#F59E0B',
-      animation: 'slide-up',
+      bgRadius: 10,
+      bgPadding: 10,
+      inAnimation: 'slide-up',
+      outAnimation: 'slide-down',
+      loopAnimation: 'float',
+      presetStyle: 'bouncy-modern',
     },
     transitionIn: { type: 'none', duration: 0.3 },
-    visualEffect: 'none',
+    activeEffects: [],
     speed: 1,
     preservePitch: true,
     volume: 0,
     muted: true,
     fadeIn: 0.2,
     fadeOut: 0.3,
-  },
-  {
-    id: 'clip-text-3',
-    trackId: 'text',
-    name: 'Title: CLIPCRAFT STUDIO',
-    startTime: 9.2,
-    duration: 3.5,
-    sourceStartOffset: 0,
-    sourceMaxDuration: 15,
-    mediaType: 'text',
-    accentColor: '#F59E0B',
-    x: 0,
-    y: 0,
-    scale: 1.05,
-    rotation: 0,
-    opacity: 1,
-    colorGrading: { ...DEFAULT_COLOR_GRADING },
-    keyframes: [],
-    textStyle: {
-      content: 'CLIPCRAFT STUDIO',
-      fontFamily: 'Bricolage Grotesque',
-      fontSize: 48,
-      fontWeight: '700',
-      color: '#38BDF8',
-      strokeColor: '#0F172A',
-      strokeWidth: 4,
-      shadowBlur: 24,
-      bgEnabled: false,
-      bgColor: '#0F172A',
-      animation: 'typewriter',
-    },
-    transitionIn: { type: 'none', duration: 0.3 },
-    visualEffect: 'none',
-    speed: 1,
-    preservePitch: true,
-    volume: 0,
-    muted: true,
-    fadeIn: 0.2,
-    fadeOut: 0.4,
   },
 
   // Audio / BGM Track
@@ -357,7 +359,7 @@ export const INITIAL_CLIPS: TimelineClip[] = [
     colorGrading: { ...DEFAULT_COLOR_GRADING },
     keyframes: [],
     transitionIn: { type: 'none', duration: 0 },
-    visualEffect: 'none',
+    activeEffects: [],
     speed: 1,
     preservePitch: true,
     volume: 78,
@@ -368,13 +370,12 @@ export const INITIAL_CLIPS: TimelineClip[] = [
       0.25, 0.45, 0.72, 0.9, 0.52, 0.38, 0.84, 0.95, 0.61, 0.42, 0.78, 0.88,
       0.34, 0.67, 0.92, 0.76, 0.49, 0.81, 0.98, 0.64, 0.44, 0.73, 0.89, 0.55,
       0.39, 0.77, 0.93, 0.68, 0.51, 0.85, 0.94, 0.59, 0.41, 0.79, 0.87, 0.48,
-      0.62, 0.91, 0.74, 0.46, 0.83, 0.96, 0.58, 0.37, 0.69, 0.82, 0.45, 0.28,
     ],
     beatMarkers: [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5],
   },
 ];
 
-// Easing interpolation helper
+// Easing helper
 export function applyEasing(t: number, easing: EasingType): number {
   const clamped = Math.max(0, Math.min(1, t));
   switch (easing) {
@@ -390,7 +391,7 @@ export function applyEasing(t: number, easing: EasingType): number {
   }
 }
 
-// Compute interpolated transform for a clip at a given timeline playhead timestamp
+// Compute interpolated transform for keyframe animation
 export function getInterpolatedTransform(
   clip: TimelineClip,
   playheadTime: number
@@ -457,7 +458,6 @@ export function getInterpolatedTransform(
   };
 }
 
-// Format seconds to SMPTE / millisecond format MM:SS.ms
 export function formatTimestamp(seconds: number): string {
   const safe = Math.max(0, seconds);
   const mins = Math.floor(safe / 60);

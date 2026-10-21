@@ -1,8 +1,9 @@
 import { TimelineClip, TrackMeta, SyntheticSceneType, FitMode } from '../types/editor';
 import { getInterpolatedTransform } from './presets';
+import { renderVectorDrawing } from './vectorDrawingRenderer';
 
 // Build CSS filter string from clip's ColorGrading
-export function buildCssFilter(clip: TimelineClip): string {
+export function buildCssFilter(clip: TimelineClip, isDraft: boolean = false): string {
   const cg = clip.colorGrading;
   const exposureMultiplier = 1 + cg.exposure / 100;
   const b = Math.round(cg.brightness * exposureMultiplier);
@@ -10,12 +11,12 @@ export function buildCssFilter(clip: TimelineClip): string {
   const s = cg.saturation;
   const sepia = cg.warmth > 0 ? Math.round(cg.warmth * 0.6) : 0;
   const hue = cg.warmth < 0 ? Math.round(cg.warmth * 0.45) : 0;
-  const blur = cg.blur > 0 ? `blur(${cg.blur * 0.5}px)` : '';
+  const blur = !isDraft && cg.blur > 0 ? `blur(${cg.blur * 0.5}px)` : '';
 
   return `brightness(${b}%) contrast(${c}%) saturate(${s}%) sepia(${sepia}%) hue-rotate(${hue}deg) ${blur}`.trim();
 }
 
-// Draw procedural 60fps synthetic scenes so the editor works out-of-the-box with zero external broken links
+// Draw procedural synthetic background scenes
 function drawSyntheticScene(
   ctx: CanvasRenderingContext2D,
   scene: SyntheticSceneType,
@@ -26,7 +27,6 @@ function drawSyntheticScene(
   const t = localTime;
 
   if (scene === 'neon-horizon') {
-    // Deep dusk synthwave sky
     const skyGrad = ctx.createLinearGradient(0, 0, 0, h * 0.65);
     skyGrad.addColorStop(0, '#070918');
     skyGrad.addColorStop(0.55, '#1E1B4B');
@@ -34,7 +34,6 @@ function drawSyntheticScene(
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, w, h);
 
-    // Animated retro sun with scanline cutouts
     const sunRadius = Math.min(w, h) * 0.22;
     const sunX = w * 0.5;
     const sunY = h * 0.42 + Math.sin(t * 1.2) * 8;
@@ -48,11 +47,10 @@ function drawSyntheticScene(
     ctx.arc(sunX, sunY, sunRadius, 0, Math.PI * 2);
     ctx.fillStyle = sunGrad;
     ctx.shadowColor = '#F43F5E';
-    ctx.shadowBlur = 40;
+    ctx.shadowBlur = 30;
     ctx.fill();
     ctx.restore();
 
-    // Horizon floor & perspective moving grid
     const horizonY = h * 0.58;
     const floorGrad = ctx.createLinearGradient(0, horizonY, 0, h);
     floorGrad.addColorStop(0, '#0F172A');
@@ -63,7 +61,6 @@ function drawSyntheticScene(
     ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
     ctx.lineWidth = 1.5;
 
-    // Perspective radial lines
     for (let i = -10; i <= 10; i++) {
       ctx.beginPath();
       ctx.moveTo(w * 0.5 + i * (w * 0.02), horizonY);
@@ -71,10 +68,9 @@ function drawSyntheticScene(
       ctx.stroke();
     }
 
-    // Scrolling horizontal grid bars
     const speedOffset = (t * 1.4) % 1;
-    for (let j = 0; j < 10; j++) {
-      const progress = (j + speedOffset) / 10;
+    for (let j = 0; j < 8; j++) {
+      const progress = (j + speedOffset) / 8;
       const yPos = horizonY + Math.pow(progress, 2.1) * (h - horizonY);
       ctx.beginPath();
       ctx.moveTo(0, yPos);
@@ -82,7 +78,6 @@ function drawSyntheticScene(
       ctx.stroke();
     }
   } else if (scene === 'golden-waves') {
-    // Golden hour ocean & cinematic sunbeams
     const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
     bgGrad.addColorStop(0, '#451A03');
     bgGrad.addColorStop(0.45, '#D97706');
@@ -91,12 +86,11 @@ function drawSyntheticScene(
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, w, h);
 
-    // Layered fluid waves
-    for (let layer = 0; layer < 5; layer++) {
+    for (let layer = 0; layer < 4; layer++) {
       ctx.beginPath();
-      const baseY = h * (0.42 + layer * 0.11);
+      const baseY = h * (0.42 + layer * 0.12);
       ctx.moveTo(0, h);
-      for (let x = 0; x <= w; x += 16) {
+      for (let x = 0; x <= w; x += 20) {
         const wave =
           Math.sin(x * 0.012 + t * (1.8 + layer * 0.3) + layer) * (18 + layer * 4) +
           Math.cos(x * 0.006 - t * 1.1) * 10;
@@ -104,23 +98,11 @@ function drawSyntheticScene(
       }
       ctx.lineTo(w, h);
       ctx.closePath();
-      const alpha = 0.25 + layer * 0.14;
+      const alpha = 0.25 + layer * 0.15;
       ctx.fillStyle = layer % 2 === 0 ? `rgba(15, 23, 42, ${alpha})` : `rgba(180, 83, 9, ${alpha})`;
       ctx.fill();
     }
-
-    // Floating golden bokeh dust particles
-    for (let p = 0; p < 18; p++) {
-      const px = ((p * 97 + t * 35 * (1 + (p % 3) * 0.3)) % (w + 60)) - 30;
-      const py = ((p * 61 - t * 22) % h + h) % h;
-      const pr = 3 + (p % 4) * 3.5;
-      ctx.beginPath();
-      ctx.arc(px, py, pr, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(254, 240, 138, 0.38)';
-      ctx.fill();
-    }
   } else if (scene === 'aurora-drift') {
-    // Deep arctic night sky with flowing aurora borealis ribbons
     const nightGrad = ctx.createLinearGradient(0, 0, w, h);
     nightGrad.addColorStop(0, '#020617');
     nightGrad.addColorStop(0.5, '#0F172A');
@@ -128,15 +110,15 @@ function drawSyntheticScene(
     ctx.fillStyle = nightGrad;
     ctx.fillRect(0, 0, w, h);
 
-    const colors = ['rgba(16, 185, 129, 0.32)', 'rgba(56, 189, 248, 0.28)', 'rgba(168, 85, 247, 0.24)'];
+    const colors = ['rgba(16, 185, 129, 0.35)', 'rgba(56, 189, 248, 0.3)'];
     colors.forEach((color, idx) => {
       ctx.beginPath();
       ctx.moveTo(0, h * 0.5);
-      for (let x = 0; x <= w; x += 20) {
+      for (let x = 0; x <= w; x += 24) {
         const y =
-          h * (0.28 + idx * 0.16) +
-          Math.sin(x * 0.008 + t * (1.5 + idx * 0.4)) * 55 +
-          Math.cos(x * 0.015 - t * 0.9) * 30;
+          h * (0.28 + idx * 0.18) +
+          Math.sin(x * 0.008 + t * (1.5 + idx * 0.4)) * 50 +
+          Math.cos(x * 0.015 - t * 0.9) * 25;
         ctx.lineTo(x, y);
       }
       ctx.lineTo(w, h);
@@ -146,7 +128,6 @@ function drawSyntheticScene(
       ctx.fill();
     });
   } else if (scene === 'prism-bokeh') {
-    // Rich translucent PIP card with animated geometric rings
     const cardGrad = ctx.createLinearGradient(0, 0, w, h);
     cardGrad.addColorStop(0, '#311042');
     cardGrad.addColorStop(0.5, '#1E1B4B');
@@ -156,152 +137,152 @@ function drawSyntheticScene(
 
     const cx = w * 0.5;
     const cy = h * 0.5;
-    for (let i = 0; i < 6; i++) {
-      const angle = t * 1.4 + (i * Math.PI) / 3;
+    for (let i = 0; i < 4; i++) {
+      const angle = t * 1.4 + (i * Math.PI) / 2;
       const ox = cx + Math.cos(angle) * (w * 0.18);
       const oy = cy + Math.sin(angle) * (h * 0.18);
-      const r = Math.min(w, h) * (0.14 + (i % 3) * 0.05);
+      const r = Math.min(w, h) * (0.14 + (i % 2) * 0.06);
       ctx.beginPath();
       ctx.arc(ox, oy, r, 0, Math.PI * 2);
       ctx.fillStyle = i % 2 === 0 ? 'rgba(244, 63, 94, 0.38)' : 'rgba(56, 189, 248, 0.38)';
       ctx.fill();
     }
-
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-    ctx.lineWidth = 6;
-    ctx.strokeRect(4, 4, w - 8, h - 8);
-  } else if (scene === 'rec-frame') {
-    // Cinema camera viewfinder overlay graphic (transparent center)
-    const pad = Math.min(w, h) * 0.06;
-    const cornerLen = Math.min(w, h) * 0.08;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.78)';
-    ctx.lineWidth = 3;
-
-    // Top-left bracket
-    ctx.beginPath();
-    ctx.moveTo(pad, pad + cornerLen);
-    ctx.lineTo(pad, pad);
-    ctx.lineTo(pad + cornerLen, pad);
-    // Top-right bracket
-    ctx.moveTo(w - pad - cornerLen, pad);
-    ctx.lineTo(w - pad, pad);
-    ctx.lineTo(w - pad, pad + cornerLen);
-    // Bottom-left bracket
-    ctx.moveTo(pad, h - pad - cornerLen);
-    ctx.lineTo(pad, h - pad);
-    ctx.lineTo(pad + cornerLen, h - pad);
-    // Bottom-right bracket
-    ctx.moveTo(w - pad - cornerLen, h - pad);
-    ctx.lineTo(w - pad, h - pad);
-    ctx.lineTo(w - pad, h - pad - cornerLen);
-    ctx.stroke();
-
-    // Center crosshair
-    const cx = w / 2;
-    const cy = h / 2;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(cx - 14, cy);
-    ctx.lineTo(cx + 14, cy);
-    ctx.moveTo(cx, cy - 14);
-    ctx.lineTo(cx, cy + 14);
-    ctx.stroke();
-
-    // Top-left RAW 4K indicator
-    ctx.fillStyle = 'rgba(239, 68, 68, 0.9)';
-    ctx.beginPath();
-    ctx.arc(pad + 18, pad + 20, 6, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-    ctx.font = '600 14px "JetBrains Mono", monospace';
-    ctx.fillText('REC · LOG3G10 · 24FPS', pad + 32, pad + 25);
   } else {
-    // Default cyber-grid fallback
     ctx.fillStyle = '#0F172A';
     ctx.fillRect(0, 0, w, h);
   }
 }
 
-// Render post-processing LUT & Visual Effects over clip layer
-function applyVisualEffectsAndVignette(
+// CapCut-Style Stacked Video Effects Processor
+export function applyCapCutVideoEffects(
   ctx: CanvasRenderingContext2D,
   clip: TimelineClip,
   localTime: number,
   w: number,
-  h: number
-) {
-  // LUT color tint overlay
-  const lut = clip.colorGrading.lutPreset;
-  if (lut === 'teal-orange') {
-    const grad = ctx.createLinearGradient(0, 0, w, h);
-    grad.addColorStop(0, 'rgba(20, 184, 166, 0.14)');
-    grad.addColorStop(1, 'rgba(245, 158, 11, 0.16)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-  } else if (lut === 'cyberpunk') {
-    const grad = ctx.createLinearGradient(0, 0, w, h);
-    grad.addColorStop(0, 'rgba(217, 70, 239, 0.18)');
-    grad.addColorStop(1, 'rgba(6, 182, 212, 0.18)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-  } else if (lut === 'vintage-80s') {
-    ctx.fillStyle = 'rgba(251, 191, 36, 0.12)';
-    ctx.fillRect(0, 0, w, h);
+  h: number,
+  isDraft: boolean = false
+): { extraOffsetX: number; extraOffsetY: number; extraScale: number } {
+  let extraOffsetX = 0;
+  let extraOffsetY = 0;
+  let extraScale = 1;
+
+  if (!clip.activeEffects || clip.activeEffects.length === 0) {
+    return { extraOffsetX, extraOffsetY, extraScale };
   }
 
-  // Visual Effect Overlays
-  if (clip.visualEffect === 'vhs') {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
-    for (let y = 0; y < h; y += 6) {
-      ctx.fillRect(0, y, w, 2);
+  // Iterate up to 2 active stacked effects
+  for (const eff of clip.activeEffects.slice(0, 2)) {
+    const intensityNorm = eff.intensity / 50; // 1.0 at default 50
+    const speedFactor = eff.speed || 1.0;
+
+    switch (eff.type) {
+      case 'camera-shake': {
+        // High-frequency randomized Math.sin/cos translation for impact beats
+        const freq = 18 * speedFactor;
+        const amplitude = Math.min(w, h) * 0.024 * intensityNorm;
+        extraOffsetX += (Math.sin(localTime * freq) + Math.cos(localTime * freq * 1.7)) * amplitude;
+        extraOffsetY += (Math.cos(localTime * freq * 1.3) + Math.sin(localTime * freq * 2.1)) * amplitude;
+        break;
+      }
+
+      case 'slow-zoom': {
+        // Smooth cinematic push-in exponential ramp (1.0x to 1.18x)
+        const rampProgress = Math.min(1, localTime / Math.max(1, clip.duration));
+        const maxZoom = 0.18 * intensityNorm;
+        extraScale *= 1.0 + maxZoom * Math.pow(rampProgress, 1.4);
+        break;
+      }
+
+      case 'edge-glow': {
+        if (!isDraft) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'screen';
+          const glowAlpha = Math.min(0.7, 0.35 * (eff.glow / 50));
+          const glowGrad = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.2, w / 2, h / 2, Math.max(w, h) * 0.7);
+          glowGrad.addColorStop(0, `rgba(255, 255, 255, ${glowAlpha * 0.8})`);
+          glowGrad.addColorStop(0.6, `rgba(245, 158, 11, ${glowAlpha * 0.4})`);
+          glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          ctx.fillStyle = glowGrad;
+          ctx.fillRect(0, 0, w, h);
+          ctx.restore();
+        }
+        break;
+      }
+
+      case 'rgb-split': {
+        // Anamorphic Chromatic Aberration channel offsets
+        const offsetPx = Math.round(6 * intensityNorm * (Math.sin(localTime * 4 * speedFactor) * 0.5 + 0.5));
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        ctx.strokeStyle = `rgba(239, 68, 68, ${0.4 * intensityNorm})`;
+        ctx.lineWidth = Math.max(1, offsetPx);
+        ctx.strokeRect(offsetPx, -offsetPx, w - offsetPx * 2, h + offsetPx * 2);
+        ctx.strokeStyle = `rgba(56, 189, 248, ${0.45 * intensityNorm})`;
+        ctx.strokeRect(-offsetPx, offsetPx, w + offsetPx * 2, h - offsetPx * 2);
+        ctx.restore();
+        break;
+      }
+
+      case 'white-strobe': {
+        // Flash / White strobe with 150ms decay curve on clip entrance or beat triggers
+        const strobeInterval = 1.0 / speedFactor;
+        const phase = (localTime % strobeInterval);
+        const flashDecaySpan = 0.15;
+        if (phase < flashDecaySpan) {
+          const flashAlpha = (1 - phase / flashDecaySpan) * 0.85 * intensityNorm;
+          ctx.save();
+          ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+          ctx.fillRect(0, 0, w, h);
+          ctx.restore();
+        }
+        break;
+      }
+
+      case 'film-grain': {
+        if (!isDraft) {
+          ctx.save();
+          const grainAlpha = Math.min(0.25, 0.08 * intensityNorm);
+          ctx.fillStyle = `rgba(255, 255, 255, ${grainAlpha})`;
+          for (let i = 0; i < 40; i++) {
+            const gx = (i * 97 + localTime * 850) % w;
+            const gy = (i * 53 + localTime * 670) % h;
+            ctx.fillRect(gx, gy, 2, 2);
+          }
+          ctx.restore();
+        }
+        break;
+      }
+
+      case 'lens-blur': {
+        // Focus pull: resolves from blur into crisp focus
+        const pullProgress = Math.min(1, localTime / 1.2);
+        const currentBlur = (1 - pullProgress) * (eff.blur || 14) * intensityNorm;
+        if (currentBlur > 0.5 && !isDraft) {
+          ctx.filter = `blur(${currentBlur.toFixed(1)}px)`;
+        }
+        break;
+      }
+
+      case 'bw-pop': {
+        // Black and white pop with center vignette
+        ctx.save();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+        const rad = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.7);
+        rad.addColorStop(0, 'rgba(0,0,0,0)');
+        rad.addColorStop(1, `rgba(0,0,0,${0.7 * intensityNorm})`);
+        ctx.fillStyle = rad;
+        ctx.fillRect(0, 0, w, h);
+        ctx.restore();
+        break;
+      }
     }
-    const barY = ((localTime * 140) % h);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-    ctx.fillRect(0, barY, w, 18);
-  } else if (clip.visualEffect === 'chromatic') {
-    ctx.strokeStyle = 'rgba(244, 63, 94, 0.45)';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(6, 2, w - 12, h - 4);
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
-    ctx.strokeRect(2, 6, w - 4, h - 12);
-  } else if (clip.visualEffect === 'film-grain') {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-    for (let i = 0; i < 45; i++) {
-      const gx = ((i * 73 + localTime * 997) % w);
-      const gy = ((i * 41 + localTime * 541) % h);
-      ctx.fillRect(gx, gy, 2, 2);
-    }
-  } else if (clip.visualEffect === 'light-leak') {
-    const leakGrad = ctx.createRadialGradient(
-      w * (0.2 + Math.sin(localTime * 1.5) * 0.15),
-      h * 0.3,
-      10,
-      w * 0.2,
-      h * 0.3,
-      w * 0.65
-    );
-    leakGrad.addColorStop(0, 'rgba(251, 146, 60, 0.45)');
-    leakGrad.addColorStop(0.5, 'rgba(244, 63, 94, 0.22)');
-    leakGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = leakGrad;
-    ctx.fillRect(0, 0, w, h);
   }
 
-  // Vignette darkening
-  if (clip.colorGrading.vignette > 0) {
-    const vStrength = (clip.colorGrading.vignette / 100) * 0.78;
-    const rad = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.28, w / 2, h / 2, Math.max(w, h) * 0.72);
-    rad.addColorStop(0, 'rgba(0,0,0,0)');
-    rad.addColorStop(1, `rgba(0,0,0,${vStrength})`);
-    ctx.fillStyle = rad;
-    ctx.fillRect(0, 0, w, h);
-  }
+  return { extraOffsetX, extraOffsetY, extraScale };
 }
 
-// Draw kinetic typography clip
-function drawTextClip(
+// Kinetic Text Engine with In/Out/Loop animations & Viral Presets (Karaoke, Bouncy)
+function drawCapCutTextClip(
   ctx: CanvasRenderingContext2D,
   clip: TimelineClip,
   playheadTime: number,
@@ -311,31 +292,79 @@ function drawTextClip(
   if (!clip.textStyle) return;
   const ts = clip.textStyle;
   const localTime = Math.max(0, playheadTime - clip.startTime);
-  const animDuration = 0.45;
-  const animProgress = Math.min(1, localTime / animDuration);
+  const remainingTime = Math.max(0, clip.duration - localTime);
 
-  let displayText = ts.content;
   let extraScale = 1;
   let extraYOffset = 0;
   let animAlpha = 1;
 
-  if (ts.animation === 'fade') {
-    animAlpha = animProgress;
-  } else if (ts.animation === 'pop') {
-    extraScale = animProgress < 0.7
-      ? 0.4 + (animProgress / 0.7) * 0.72
-      : 1.12 - ((animProgress - 0.7) / 0.3) * 0.12;
-  } else if (ts.animation === 'slide-up') {
-    extraYOffset = (1 - animProgress) * 42;
-    animAlpha = animProgress;
-  } else if (ts.animation === 'typewriter') {
-    const typeSpan = Math.min(1.4, clip.duration * 0.65);
-    const charRatio = Math.min(1, localTime / Math.max(0.2, typeSpan));
-    const charCount = Math.ceil(ts.content.length * charRatio);
-    displayText = ts.content.slice(0, charCount);
-  } else if (ts.animation === 'glitch') {
-    if (localTime < 0.5 && Math.floor(localTime * 25) % 2 === 0) {
-      extraYOffset = (Math.sin(localTime * 90) * 6);
+  // 1. IN ANIMATIONS (First 0.45s)
+  const inDuration = 0.45;
+  if (localTime < inDuration) {
+    const p = localTime / inDuration;
+    switch (ts.inAnimation) {
+      case 'pop-bounce': {
+        // Bouncy spring curve
+        extraScale = p < 0.6 ? (p / 0.6) * 1.2 : 1.2 - ((p - 0.6) / 0.4) * 0.2;
+        break;
+      }
+      case 'slide-up': {
+        extraYOffset = (1 - p) * 45;
+        animAlpha = p;
+        break;
+      }
+      case 'fade': {
+        animAlpha = p;
+        break;
+      }
+      case 'typewriter': {
+        // Handled below character-by-character
+        break;
+      }
+    }
+  }
+
+  // 2. OUT ANIMATIONS (Last 0.4s)
+  const outDuration = 0.4;
+  if (remainingTime < outDuration && ts.outAnimation !== 'none') {
+    const p = remainingTime / outDuration; // 1 -> 0
+    switch (ts.outAnimation) {
+      case 'slide-down': {
+        extraYOffset = (1 - p) * 45;
+        animAlpha = p;
+        break;
+      }
+      case 'zoom-out': {
+        extraScale = Math.max(0.1, p);
+        animAlpha = p;
+        break;
+      }
+      case 'glitch-dissolve': {
+        animAlpha = Math.random() > 0.3 ? p : 0;
+        extraYOffset = (Math.random() - 0.5) * 8;
+        break;
+      }
+    }
+  }
+
+  // 3. LOOP ANIMATIONS (During active body)
+  if (localTime >= inDuration && remainingTime >= outDuration) {
+    switch (ts.loopAnimation) {
+      case 'heartbeat': {
+        const beat = Math.sin(localTime * 6);
+        extraScale = 1.0 + (beat > 0.4 ? 0.08 * beat : 0);
+        break;
+      }
+      case 'float': {
+        extraYOffset = Math.sin(localTime * 3.5) * 6;
+        break;
+      }
+      case 'neon-flicker': {
+        if (Math.sin(localTime * 14) > 0.85) {
+          animAlpha = 0.6;
+        }
+        break;
+      }
     }
   }
 
@@ -349,29 +378,84 @@ function drawTextClip(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
+  // 4. VIRAL SUBTITLE / CAPTION PRESETS
+  if (ts.presetStyle === 'karaoke-active') {
+    // Word-by-word karaoke highlight style
+    const words = ts.content.split(' ');
+    const totalWords = Math.max(1, words.length);
+    const activeWordIndex = Math.min(
+      totalWords - 1,
+      Math.floor((localTime / clip.duration) * totalWords)
+    );
+
+    // Measure total line
+    const fullTextMetrics = ctx.measureText(ts.content);
+    let currentX = -fullTextMetrics.width / 2;
+
+    words.forEach((word, idx) => {
+      const wordMetrics = ctx.measureText(word + ' ');
+      const isWordActive = idx === activeWordIndex;
+
+      ctx.save();
+      if (isWordActive) {
+        ctx.scale(1.12, 1.12);
+        ctx.fillStyle = '#F59E0B'; // Highlight active word in golden amber
+      } else {
+        ctx.fillStyle = ts.color;
+      }
+
+      if (ts.strokeWidth > 0) {
+        ctx.strokeStyle = ts.strokeColor;
+        ctx.lineWidth = ts.strokeWidth * 2;
+        ctx.lineJoin = 'round';
+        ctx.strokeText(word, currentX + wordMetrics.width / 2, 0);
+      }
+
+      ctx.fillText(word, currentX + wordMetrics.width / 2, 0);
+      ctx.restore();
+
+      currentX += wordMetrics.width;
+    });
+
+    ctx.restore();
+    return;
+  }
+
+  // Handle standard or typewriter text
+  let displayText = ts.content;
+  if (ts.inAnimation === 'typewriter') {
+    const typeSpan = Math.min(1.5, clip.duration * 0.7);
+    const charRatio = Math.min(1, localTime / Math.max(0.2, typeSpan));
+    const charCount = Math.ceil(ts.content.length * charRatio);
+    displayText = ts.content.slice(0, charCount);
+  }
+
   const metrics = ctx.measureText(displayText || ' ');
   const textWidth = metrics.width;
   const textHeight = responsiveFontSize * 1.25;
 
+  // Background Pill Box with adjustable radius and padding
   if (ts.bgEnabled) {
-    const padX = responsiveFontSize * 0.55;
-    const padY = responsiveFontSize * 0.25;
+    const pad = ts.bgPadding || 10;
+    const radius = ts.bgRadius || 8;
     ctx.fillStyle = ts.bgColor;
-    const rx = -textWidth / 2 - padX;
-    const ry = -textHeight / 2 - padY;
-    const rw = textWidth + padX * 2;
-    const rh = textHeight + padY * 2;
+    const rx = -textWidth / 2 - pad;
+    const ry = -textHeight / 2 - pad / 2;
+    const rw = textWidth + pad * 2;
+    const rh = textHeight + pad;
     ctx.beginPath();
-    ctx.roundRect(rx, ry, rw, rh, 10);
+    ctx.roundRect(rx, ry, rw, rh, radius);
     ctx.fill();
   }
 
+  // Drop Shadow
   if (ts.shadowBlur > 0) {
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
+    ctx.shadowColor = ts.shadowColor || 'rgba(0, 0, 0, 0.8)';
     ctx.shadowBlur = ts.shadowBlur;
-    ctx.shadowOffsetY = 4;
+    ctx.shadowOffsetY = ts.shadowDistance || 3;
   }
 
+  // Border / Stroke
   if (ts.strokeWidth > 0) {
     ctx.strokeStyle = ts.strokeColor;
     ctx.lineWidth = ts.strokeWidth * 2;
@@ -384,9 +468,30 @@ function drawTextClip(
   ctx.restore();
 }
 
-// Render complete frame across all visible tracks onto HTML5 Canvas
+// Reusable offscreen canvas
+let sharedOffscreenCanvas: HTMLCanvasElement | null = null;
+let sharedOffscreenCtx: CanvasRenderingContext2D | null = null;
+
+function getSharedOffscreenContext(width: number, height: number): {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+} | null {
+  if (typeof window === 'undefined') return null;
+  if (!sharedOffscreenCanvas) {
+    sharedOffscreenCanvas = document.createElement('canvas');
+    sharedOffscreenCtx = sharedOffscreenCanvas.getContext('2d', { alpha: false });
+  }
+  if (sharedOffscreenCanvas.width !== width || sharedOffscreenCanvas.height !== height) {
+    sharedOffscreenCanvas.width = width;
+    sharedOffscreenCanvas.height = height;
+  }
+  if (!sharedOffscreenCtx) return null;
+  return { canvas: sharedOffscreenCanvas, ctx: sharedOffscreenCtx };
+}
+
+// Render composite frame across all visible tracks
 export function renderCompositeFrame(
-  ctx: CanvasRenderingContext2D,
+  targetCtx: CanvasRenderingContext2D,
   canvasWidth: number,
   canvasHeight: number,
   playheadTime: number,
@@ -395,23 +500,27 @@ export function renderCompositeFrame(
   mediaElements: Map<string, HTMLVideoElement | HTMLImageElement>,
   fitMode: FitMode,
   selectedClipId: string | null,
-  showSafeGuides: boolean
+  showSafeGuides: boolean = false,
+  isDraftScrubbing: boolean = false
 ) {
+  const renderScale = isDraftScrubbing ? 0.5 : 1;
+  const rw = Math.round(canvasWidth * renderScale);
+  const rh = Math.round(canvasHeight * renderScale);
+
+  const offscreen = getSharedOffscreenContext(rw, rh);
+  const ctx = offscreen?.ctx || targetCtx;
+
   ctx.save();
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-  // Studio dark letterbox backdrop
+  ctx.clearRect(0, 0, rw, rh);
   ctx.fillStyle = '#07080C';
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  ctx.fillRect(0, 0, rw, rh);
 
-  // Track rendering order from bottom to top: video -> overlay -> text
   const layerOrder: ('video' | 'overlay' | 'text')[] = ['video', 'overlay', 'text'];
 
   for (const trackType of layerOrder) {
     const trackMeta = tracks.find((t) => t.id === trackType);
     if (trackMeta && !trackMeta.visible) continue;
 
-    // Find active clips on this track at playheadTime
     const activeClips = clips
       .filter(
         (c) =>
@@ -424,11 +533,11 @@ export function renderCompositeFrame(
     for (const clip of activeClips) {
       const localTime = (playheadTime - clip.startTime) * clip.speed;
       const rawClipElapsed = playheadTime - clip.startTime;
-
-      // Keyframe interpolated transform
       const transform = getInterpolatedTransform(clip, playheadTime);
 
-      // Calculate fade-in / fade-out envelope
+      // Apply CapCut video effects offset & scale (Shake, Slow Zoom)
+      const capcutEffectMotion = applyCapCutVideoEffects(ctx, clip, localTime, rw, rh, isDraftScrubbing);
+
       let fadeAlpha = 1;
       if (clip.fadeIn > 0 && rawClipElapsed < clip.fadeIn) {
         fadeAlpha = rawClipElapsed / clip.fadeIn;
@@ -438,11 +547,9 @@ export function renderCompositeFrame(
         fadeAlpha = Math.min(fadeAlpha, Math.max(0, remaining / clip.fadeOut));
       }
 
-      // Transition In animation calculations
       let transScale = 1;
       let transOffsetX = 0;
       let transAlpha = 1;
-      let wipeClipRatio = 1;
 
       if (
         clip.transitionIn.type !== 'none' &&
@@ -457,63 +564,83 @@ export function renderCompositeFrame(
           transScale = 0.65 + 0.35 * eased;
           transAlpha = eased;
         } else if (clip.transitionIn.type === 'whip-pan') {
-          transOffsetX = (1 - eased) * canvasWidth * 0.85;
+          transOffsetX = (1 - eased) * rw * 0.85;
           transAlpha = eased;
-        } else if (clip.transitionIn.type === 'wipe-left') {
-          wipeClipRatio = eased;
         }
       }
 
       ctx.save();
 
-      // Apply wipe clipping region if active
-      if (wipeClipRatio < 1) {
-        ctx.beginPath();
-        ctx.rect(0, 0, canvasWidth * wipeClipRatio, canvasHeight);
-        ctx.clip();
-      }
-
-      // Move origin to center + clip transform offset
-      const centerX = canvasWidth / 2 + (transform.x / 100) * canvasWidth + transOffsetX;
-      const centerY = canvasHeight / 2 + (transform.y / 100) * canvasHeight;
+      const centerX =
+        rw / 2 +
+        (transform.x / 100) * rw +
+        transOffsetX +
+        capcutEffectMotion.extraOffsetX;
+      const centerY =
+        rh / 2 +
+        (transform.y / 100) * rh +
+        capcutEffectMotion.extraOffsetY;
 
       ctx.translate(centerX, centerY);
       ctx.rotate((transform.rotation * Math.PI) / 180);
-      ctx.scale(transform.scale * transScale, transform.scale * transScale);
+      ctx.scale(
+        transform.scale * transScale * capcutEffectMotion.extraScale,
+        transform.scale * transScale * capcutEffectMotion.extraScale
+      );
       ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity * fadeAlpha * transAlpha));
 
       if (clip.mediaType === 'text') {
-        drawTextClip(ctx, clip, playheadTime, canvasWidth, canvasHeight);
-      } else {
-        ctx.filter = buildCssFilter(clip);
-
-        // Draw media or synthetic scene centered at (-canvasWidth/2, -canvasHeight/2)
+        drawCapCutTextClip(ctx, clip, playheadTime, rw, rh);
+      } else if (clip.mediaType === 'drawing' && clip.drawingData) {
         ctx.save();
-        ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
+        ctx.translate(-rw / 2, -rh / 2);
+        renderVectorDrawing(ctx, clip.drawingData, rw, rh);
+        ctx.restore();
+      } else if (clip.mediaType === 'null') {
+        // Null object anchor outline in edit mode
+        if (selectedClipId === clip.id) {
+          ctx.save();
+          ctx.strokeStyle = '#06B6D4';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 6]);
+          ctx.strokeRect(-40, -40, 80, 80);
+          ctx.beginPath();
+          ctx.moveTo(-10, 0); ctx.lineTo(10, 0);
+          ctx.moveTo(0, -10); ctx.lineTo(0, 10);
+          ctx.stroke();
+          ctx.restore();
+        }
+      } else if (clip.mediaType === 'camera') {
+        // Camera layer is non-physical in 2D preview
+      } else {
+        ctx.filter = buildCssFilter(clip, isDraftScrubbing);
+
+        ctx.save();
+        ctx.translate(-rw / 2, -rh / 2);
 
         const mediaEl = mediaElements.get(clip.id);
         if (mediaEl) {
-          let srcW = canvasWidth;
-          let srcH = canvasHeight;
+          let srcW = rw;
+          let srcH = rh;
           if (mediaEl instanceof HTMLVideoElement) {
-            srcW = mediaEl.videoWidth || canvasWidth;
-            srcH = mediaEl.videoHeight || canvasHeight;
+            srcW = mediaEl.videoWidth || rw;
+            srcH = mediaEl.videoHeight || rh;
           } else if (mediaEl instanceof HTMLImageElement) {
-            srcW = mediaEl.naturalWidth || canvasWidth;
-            srcH = mediaEl.naturalHeight || canvasHeight;
+            srcW = mediaEl.naturalWidth || rw;
+            srcH = mediaEl.naturalHeight || rh;
           }
 
           if (fitMode === 'fill') {
-            ctx.drawImage(mediaEl, 0, 0, canvasWidth, canvasHeight);
+            ctx.drawImage(mediaEl, 0, 0, rw, rh);
           } else {
             const scaleRatio =
               fitMode === 'cover'
-                ? Math.max(canvasWidth / srcW, canvasHeight / srcH)
-                : Math.min(canvasWidth / srcW, canvasHeight / srcH);
+                ? Math.max(rw / srcW, rh / srcH)
+                : Math.min(rw / srcW, rh / srcH);
             const drawW = srcW * scaleRatio;
             const drawH = srcH * scaleRatio;
-            const dx = (canvasWidth - drawW) / 2;
-            const dy = (canvasHeight - drawH) / 2;
+            const dx = (rw - drawW) / 2;
+            const dy = (rh - drawH) / 2;
             ctx.drawImage(mediaEl, dx, dy, drawW, drawH);
           }
         } else if (clip.syntheticScene) {
@@ -521,46 +648,25 @@ export function renderCompositeFrame(
             ctx,
             clip.syntheticScene,
             clip.sourceStartOffset + localTime,
-            canvasWidth,
-            canvasHeight
+            rw,
+            rh
           );
         }
 
         ctx.filter = 'none';
-        applyVisualEffectsAndVignette(ctx, clip, localTime, canvasWidth, canvasHeight);
         ctx.restore();
-      }
-
-      // Draw subtle selection bounding frame when clip is selected
-      if (selectedClipId === clip.id && showSafeGuides) {
-        ctx.strokeStyle = '#F59E0B';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
-        const boxW = clip.mediaType === 'text' ? canvasWidth * 0.72 : canvasWidth * 0.98;
-        const boxH = clip.mediaType === 'text' ? canvasHeight * 0.18 : canvasHeight * 0.98;
-        ctx.strokeRect(-boxW / 2, -boxH / 2, boxW, boxH);
-        ctx.setLineDash([]);
       }
 
       ctx.restore();
     }
   }
 
-  // Optional rule-of-thirds safe zone guides
-  if (showSafeGuides) {
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(canvasWidth / 3, 0);
-    ctx.lineTo(canvasWidth / 3, canvasHeight);
-    ctx.moveTo((canvasWidth * 2) / 3, 0);
-    ctx.lineTo((canvasWidth * 2) / 3, canvasHeight);
-    ctx.moveTo(0, canvasHeight / 3);
-    ctx.lineTo(canvasWidth, canvasHeight / 3);
-    ctx.moveTo(0, (canvasHeight * 2) / 3);
-    ctx.lineTo(canvasWidth, (canvasHeight * 2) / 3);
-    ctx.stroke();
-  }
-
   ctx.restore();
+
+  if (offscreen && offscreen.ctx !== targetCtx) {
+    targetCtx.save();
+    targetCtx.imageSmoothingEnabled = !isDraftScrubbing;
+    targetCtx.drawImage(offscreen.canvas, 0, 0, rw, rh, 0, 0, canvasWidth, canvasHeight);
+    targetCtx.restore();
+  }
 }

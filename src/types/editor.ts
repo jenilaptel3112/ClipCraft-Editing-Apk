@@ -18,10 +18,20 @@ export interface Keyframe {
   timeOffset: number; // Relative to clip start (0 to clip.duration)
   x: number;          // Normalized offset (-100 to 100%)
   y: number;          // Normalized offset (-100 to 100%)
+  z?: number;         // 3D Z offset
   scale: number;      // 0.1 to 3.0
+  scaleX?: number;
+  scaleY?: number;
+  scaleZ?: number;
   rotation: number;   // -360 to 360 deg
+  rotateX?: number;
+  rotateY?: number;
+  rotateZ?: number;
   opacity: number;    // 0 to 1
   easing: EasingType;
+  fov?: number;       // Camera FOV
+  startTrim?: number; // Vector drawing trim
+  endTrim?: number;
 }
 
 export interface ColorGrading {
@@ -35,20 +45,71 @@ export interface ColorGrading {
   lutPreset: string;  // 'none' | 'teal-orange' | 'noir' | 'vintage-80s' | 'cyberpunk' | 'clean-warm' | 'kodak-gold'
 }
 
-export type TextAnimationType = 'none' | 'fade' | 'pop' | 'slide-up' | 'typewriter' | 'glitch';
+// Video Effects
+export type VideoEffectType =
+  | 'none'
+  | 'camera-shake'
+  | 'slow-zoom'
+  | 'edge-glow'
+  | 'rgb-split'
+  | 'chromatic'
+  | 'vhs'
+  | 'light-leak'
+  | 'white-strobe'
+  | 'film-grain'
+  | 'lens-blur'
+  | 'bw-pop';
+
+export type VisualEffectType = VideoEffectType;
+
+export type ActiveDockTab =
+  | 'split'
+  | 'color'
+  | 'text'
+  | 'keyframes'
+  | 'speed'
+  | 'audio'
+  | 'transitions'
+  | 'effects'
+  | 'edit';
+
+export interface VideoEffectConfig {
+  id: string;
+  type: VideoEffectType;
+  intensity: number; // 0 to 100 (default 50)
+  speed: number;     // 0.5 to 3.0 (default 1.0)
+  glow: number;      // 0 to 100 (default 50)
+  blur: number;      // 0 to 30 (default 10)
+}
+
+// Text Animations (In, Out, Loop) & Viral Presets
+export type TextInAnimation = 'none' | 'typewriter' | 'pop-bounce' | 'slide-up' | 'fade';
+export type TextOutAnimation = 'none' | 'slide-down' | 'zoom-out' | 'glitch-dissolve';
+export type TextLoopAnimation = 'none' | 'heartbeat' | 'float' | 'neon-flicker';
+export type TextPresetStyle = 'none' | 'karaoke-active' | 'bouncy-modern' | 'minimal' | 'bold-stroke';
 
 export interface TextStyle {
   content: string;
   fontFamily: string;
   fontSize: number;
-  fontWeight: '400' | '600' | '700';
+  fontWeight: '400' | '600' | '700' | '800';
   color: string;
   strokeColor: string;
   strokeWidth: number;
   shadowBlur: number;
+  shadowDistance: number;
+  shadowColor: string;
   bgEnabled: boolean;
   bgColor: string;
-  animation: TextAnimationType;
+  bgRadius: number; // corner radius in px
+  bgPadding: number; // internal padding in px
+
+  // Animations
+  inAnimation: TextInAnimation;
+  outAnimation: TextOutAnimation;
+  loopAnimation: TextLoopAnimation;
+  presetStyle: TextPresetStyle;
+  animation?: string;
 }
 
 export type TransitionType = 'none' | 'crossfade' | 'wipe-left' | 'zoom-in' | 'whip-pan';
@@ -58,7 +119,43 @@ export interface TransitionConfig {
   duration: number; // in seconds, e.g., 0.5s to 1.5s
 }
 
-export type VisualEffectType = 'none' | 'chromatic' | 'vhs' | 'film-grain' | 'halftone' | 'light-leak';
+// 4K Smart Proxy & Raw Master Media Record
+export interface MediaProxyRecord {
+  clipId: string;
+  is4K: boolean;
+  originalWidth: number;
+  originalHeight: number;
+  originalFile?: File;
+  originalUrl: string; // Master Full-Res 4K source (for offline rendering)
+  proxyUrl: string;    // 720p/1080p proxy preview source (for smooth canvas timeline)
+}
+
+// Vector Drawing & Brush Data
+export interface DrawingPoint {
+  x: number;
+  y: number;
+  pressure?: number;
+}
+
+export type BrushType = 'pen' | 'marker' | 'neon' | 'eraser';
+
+export interface DrawingStroke {
+  id: string;
+  points: DrawingPoint[];
+  color: string;
+  width: number;
+  opacity: number;
+  brushType: BrushType;
+  cap: 'round' | 'square';
+}
+
+export interface DrawingData {
+  strokes: DrawingStroke[];
+  startTrim: number; // 0 to 100%
+  endTrim: number;   // 0 to 100%
+}
+
+export type GizmoMode = 'translate' | 'rotate' | 'scale' | null;
 
 export interface TimelineClip {
   id: string;
@@ -68,24 +165,56 @@ export interface TimelineClip {
   duration: number;       // Visible duration on timeline (seconds)
   sourceStartOffset: number; // Trim in-point in media source (seconds)
   sourceMaxDuration: number; // Total available media duration
-  mediaType: 'synthetic' | 'video' | 'image' | 'audio' | 'text';
+  mediaType: 'synthetic' | 'video' | 'image' | 'audio' | 'text' | 'null' | 'camera' | 'drawing';
   syntheticScene?: SyntheticSceneType;
-  mediaUrl?: string;
+  mediaUrl?: string;      // Current active preview url
+  originalMediaUrl?: string; // High-Res 4K Master URL
+  is4KSource?: boolean;
   accentColor: string;
 
-  // Transform properties (base values when no keyframes exist)
+  // 2D & 3D Transform properties
   x: number;
   y: number;
+  z?: number;             // 3D Depth (-1000 to 1000)
   scale: number;
-  rotation: number;
+  scaleX?: number;
+  scaleY?: number;
+  scaleZ?: number;
+  rotation: number;       // 2D rotation & 3D rotateZ (deg)
+  rotateX?: number;       // 3D X-tilt (deg)
+  rotateY?: number;       // 3D Y-pan (deg)
+  rotateZ?: number;       // 3D Z-roll (deg)
+  anchorX?: number;       // 3D Pivot coordinate (-100 to 100%)
+  anchorY?: number;
+  anchorZ?: number;
   opacity: number;
+
+  // 3D Mode & Parenting
+  is3D?: boolean;
+  parentId?: string | null;
+
+  // Camera 3D controls (When mediaType === 'camera')
+  cameraFov?: number;
+  cameraTarget?: [number, number, number];
+  cameraRoll?: number;
+  cameraPreset?: 'front' | 'top' | 'isometric' | 'orbit' | 'custom';
+  cameraDofEnabled?: boolean;
+  cameraAperture?: number;
+  cameraFocusDistance?: number;
+  cameraBokehRadius?: number;
+
+  // Vector Drawing Data (When mediaType === 'drawing')
+  drawingData?: DrawingData;
 
   // Sub-systems
   colorGrading: ColorGrading;
   keyframes: Keyframe[];
   textStyle?: TextStyle;
   transitionIn: TransitionConfig;
-  visualEffect: VisualEffectType;
+
+  // Stacked video effects (up to 2 simultaneous effects)
+  activeEffects: VideoEffectConfig[];
+  visualEffect?: VideoEffectType;
 
   // Speed & Audio
   speed: number;          // 0.2 to 4.0
@@ -108,18 +237,49 @@ export interface TrackMeta {
   visible: boolean;
 }
 
-export type ActiveDockTab =
-  | 'edit'
-  | 'text'
-  | 'audio'
-  | 'color'
-  | 'speed'
-  | 'transitions'
-  | 'keyframes'
-  | 'effects';
+// Pro-Grade Export Suite Configuration
+export type ExportResolution = '4K' | '2K' | '1080p' | '720p';
+export type ExportFps = 24 | 30 | 60;
+export type ExportQualityPreset = 'low' | 'standard' | 'high';
+export type ExportContainerFormat = 'mp4' | 'webm';
 
-export interface ExportConfig {
-  resolution: '720p' | '1080p';
-  fps: 30 | 60;
-  format: 'webm' | 'mp4';
+export interface ProExportConfig {
+  resolution: ExportResolution;
+  fps: ExportFps;
+  qualityPreset: ExportQualityPreset;
+  bitrateMbps: number; // dynamic slider: 8-80 Mbps
+  format: ExportContainerFormat;
+  codec: string;
+}
+
+export type ExportConfig = ProExportConfig;
+
+export interface ExportProgressState {
+  currentFrame: number;
+  totalFrames: number;
+  percentage: number;
+  statusText: string;
+  estimatedSecondsRemaining: number;
+}
+
+// Screen Architecture
+export type AppScreen =
+  | 'DASHBOARD_SCREEN'
+  | 'MEDIA_PICKER_MODAL'
+  | 'EDITOR_SCREEN'
+  | 'EXPORT_SCREEN';
+
+// Project metadata and state persistence
+export interface ProjectData {
+  id: string;
+  title: string;
+  createdAt: number;
+  modifiedAt: number;
+  aspectRatio: AspectRatio;
+  fitMode: FitMode;
+  thumbnailGradient?: string;
+  thumbnailUrl?: string;
+  duration: number;
+  clips: TimelineClip[];
+  tracks: TrackMeta[];
 }
