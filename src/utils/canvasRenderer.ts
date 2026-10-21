@@ -3,6 +3,9 @@ import { getInterpolatedTransform } from './presets';
 import { renderVectorDrawing } from './vectorDrawingRenderer';
 import { buildCompoundCssFilter, applyCompoundOverlaysAndMotion } from './customFxEngine';
 
+// Cache of last valid video frames to guarantee zero black frame flashes during seeking/loading
+const lastValidVideoCanvasCache = new Map<string, HTMLCanvasElement>();
+
 // Build CSS filter string from clip's ColorGrading
 export function buildCssFilter(clip: TimelineClip, isDraft: boolean = false): string {
   const cg = clip.colorGrading;
@@ -752,24 +755,29 @@ export function renderCompositeFrame(
     if (primaryActiveClip) {
       const mediaEl = mediaElements.get(primaryActiveClip.id);
       if (mediaEl) {
-        ctx.save();
-        ctx.filter = isDraftScrubbing ? 'blur(10px) brightness(0.6)' : 'blur(24px) brightness(0.6)';
-        let srcW = rw;
-        let srcH = rh;
-        if (mediaEl instanceof HTMLVideoElement) {
-          srcW = mediaEl.videoWidth || rw;
-          srcH = mediaEl.videoHeight || rh;
-        } else if (mediaEl instanceof HTMLImageElement) {
-          srcW = mediaEl.naturalWidth || rw;
-          srcH = mediaEl.naturalHeight || rh;
+        const isVideoEl = mediaEl instanceof HTMLVideoElement;
+        const isVideoReady = !isVideoEl || (mediaEl.readyState >= 2 && mediaEl.videoWidth > 0);
+
+        if (isVideoReady) {
+          ctx.save();
+          ctx.filter = isDraftScrubbing ? 'blur(10px) brightness(0.6)' : 'blur(24px) brightness(0.6)';
+          let srcW = rw;
+          let srcH = rh;
+          if (isVideoEl) {
+            srcW = mediaEl.videoWidth || rw;
+            srcH = mediaEl.videoHeight || rh;
+          } else if (mediaEl instanceof HTMLImageElement) {
+            srcW = mediaEl.naturalWidth || rw;
+            srcH = mediaEl.naturalHeight || rh;
+          }
+          const scaleCover = Math.max(rw / srcW, rh / srcH) * 1.15;
+          const drawW = srcW * scaleCover;
+          const drawH = srcH * scaleCover;
+          const dx = (rw - drawW) / 2;
+          const dy = (rh - drawH) / 2;
+          ctx.drawImage(mediaEl, dx, dy, drawW, drawH);
+          ctx.restore();
         }
-        const scaleCover = Math.max(rw / srcW, rh / srcH) * 1.15;
-        const drawW = srcW * scaleCover;
-        const drawH = srcH * scaleCover;
-        const dx = (rw - drawW) / 2;
-        const dy = (rh - drawH) / 2;
-        ctx.drawImage(mediaEl, dx, dy, drawW, drawH);
-        ctx.restore();
       }
     }
   }
@@ -881,26 +889,66 @@ export function renderCompositeFrame(
         if (mediaEl) {
           let srcW = rw;
           let srcH = rh;
+          let canDrawDirect = true;
+
           if (mediaEl instanceof HTMLVideoElement) {
             srcW = mediaEl.videoWidth || rw;
             srcH = mediaEl.videoHeight || rh;
+
+            // Strict ReadyState Gate before Canvas Painting
+            const isReady =
+              mediaEl.readyState >= 2 && // HTMLMediaElement.HAVE_CURRENT_DATA
+              !mediaEl.seeking &&
+              mediaEl.videoWidth > 0;
+
+            if (isReady) {
+              canDrawDirect = true;
+              // Capture last valid frame into cache to eliminate any black screen flicker
+              let cacheCanvas = lastValidVideoCanvasCache.get(clip.id);
+              if (!cacheCanvas) {
+                cacheCanvas = document.createElement('canvas');
+                lastValidVideoCanvasCache.set(clip.id, cacheCanvas);
+              }
+              if (cacheCanvas.width !== mediaEl.videoWidth || cacheCanvas.height !== mediaEl.videoHeight) {
+                cacheCanvas.width = mediaEl.videoWidth;
+                cacheCanvas.height = mediaEl.videoHeight;
+              }
+              const cctx = cacheCanvas.getContext('2d');
+              if (cctx) {
+                cctx.drawImage(mediaEl, 0, 0);
+              }
+            } else {
+              canDrawDirect = false;
+            }
           } else if (mediaEl instanceof HTMLImageElement) {
             srcW = mediaEl.naturalWidth || rw;
             srcH = mediaEl.naturalHeight || rh;
           }
 
-          if (fitMode === 'fill') {
-            ctx.drawImage(mediaEl, 0, 0, rw, rh);
+          const cachedCanvas = lastValidVideoCanvasCache.get(clip.id);
+          const drawSource = canDrawDirect ? mediaEl : cachedCanvas;
+
+          if (drawSource) {
+            if (fitMode === 'fill') {
+              ctx.drawImage(drawSource, 0, 0, rw, rh);
+            } else {
+              const scaleRatio =
+                fitMode === 'cover'
+                  ? Math.max(rw / srcW, rh / srcH)
+                  : Math.min(rw / srcW, rh / srcH);
+              const drawW = srcW * scaleRatio;
+              const drawH = srcH * scaleRatio;
+              const dx = (rw - drawW) / 2;
+              const dy = (rh - drawH) / 2;
+              ctx.drawImage(drawSource, dx, dy, drawW, drawH);
+            }
           } else {
-            const scaleRatio =
-              fitMode === 'cover'
-                ? Math.max(rw / srcW, rh / srcH)
-                : Math.min(rw / srcW, rh / srcH);
-            const drawW = srcW * scaleRatio;
-            const drawH = srcH * scaleRatio;
-            const dx = (rw - drawW) / 2;
-            const dy = (rh - drawH) / 2;
-            ctx.drawImage(mediaEl, dx, dy, drawW, drawH);
+            // Stylized placeholder fallback - never draw black
+            const grad = ctx.createLinearGradient(0, 0, rw, rh);
+            grad.addColorStop(0, '#1E293B');
+            grad.addColorStop(1, '#0F172A');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, rw, rh);
           }
         } else if (clip.syntheticScene) {
           drawSyntheticScene(

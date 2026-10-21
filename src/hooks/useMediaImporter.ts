@@ -1,7 +1,15 @@
 import { useState, useCallback } from 'react';
 import { MediaImportResult, MediaToastNotice } from '../types/mediaStreaming';
-import { proxyManager } from '../utils/proxyManager';
 import { extractWaveformChunked } from '../utils/mediaWorkerPool';
+
+// Standard mobile video containers and extensions
+const SUPPORTED_VIDEO_TYPES = [
+  'video/mp4',
+  'video/quicktime', // .mov (iPhone/iPad standard)
+  'video/webm',
+  'video/x-m4v',
+  'video/3gpp',
+];
 
 export function useMediaImporter() {
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -14,17 +22,30 @@ export function useMediaImporter() {
 
   /**
    * Safely imports media file of any size or duration (from 5s to 2 hours)
-   * without locking the main thread or loading into monolithic ArrayBuffers.
+   * with strict mobile WebKit/Chromium resilience:
+   * - Double metadata + canplay lock
+   * - Hardware texture awakening handshake
+   * - Error code diagnostics (code 3 decode error, code 4 format unsupported)
+   * - Chunked waveform extraction
    */
   const importMediaFile = useCallback(
     async (file: File): Promise<MediaImportResult | null> => {
       setIsImporting(true);
       setImportProgress(10);
 
+      // Validate standard mobile container extensions if MIME is ambiguous
+      const fileNameLower = file.name.toLowerCase();
+      const isMovOrMp4Ext =
+        fileNameLower.endsWith('.mov') ||
+        fileNameLower.endsWith('.mp4') ||
+        fileNameLower.endsWith('.webm') ||
+        fileNameLower.endsWith('.m4v');
+
+      const isAudio = file.type.startsWith('audio/') || fileNameLower.endsWith('.mp3') || fileNameLower.endsWith('.wav') || fileNameLower.endsWith('.aac');
+      const isImage = file.type.startsWith('image/') || fileNameLower.endsWith('.png') || fileNameLower.endsWith('.jpg') || fileNameLower.endsWith('.jpeg') || fileNameLower.endsWith('.webp');
+      const isVideo = (!isAudio && !isImage) || SUPPORTED_VIDEO_TYPES.includes(file.type) || isMovOrMp4Ext;
+
       const objectUrl = URL.createObjectURL(file);
-      const isAudio = file.type.startsWith('audio/');
-      const isImage = file.type.startsWith('image/');
-      const isVideo = !isAudio && !isImage;
 
       try {
         let duration = 5.0;
@@ -32,45 +53,111 @@ export function useMediaImporter() {
         let height = 1080;
 
         if (isVideo) {
-          // Lightweight non-blocking metadata extraction with strict 5-second timeout fallback
+          // Structured Video Metadata & Texture Awakening Controller
           const metadataPromise = new Promise<{ duration: number; width: number; height: number }>(
             (resolve) => {
               const video = document.createElement('video');
-              video.preload = 'metadata';
+
+              // 1. Critical Mobile Video Attributes
               video.playsInline = true;
-              video.muted = true;
+              video.setAttribute('webkit-playsinline', 'true');
+              video.muted = true; // Bypasses mobile autoplay restriction
+              video.preload = 'auto';
               video.crossOrigin = 'anonymous';
+
+              let isSettled = false;
+              let metadataLoaded = false;
+              let canPlayFired = false;
+              let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
               const cleanup = () => {
                 video.removeEventListener('loadedmetadata', onLoaded);
+                video.removeEventListener('canplay', onCanPlay);
                 video.removeEventListener('error', onError);
-                video.src = '';
-                video.load();
+                if (timeoutId) clearTimeout(timeoutId);
+              };
+
+              const checkAndResolve = async () => {
+                if (isSettled) return;
+                if (metadataLoaded && canPlayFired) {
+                  isSettled = true;
+                  cleanup();
+
+                  // 2. Video Texture Awakening Handshake:
+                  // Mobile WebKit / Chromium often keeps video texture black until
+                  // an explicit play -> pause or seek to 0.001s kicks off the hardware decoder
+                  try {
+                    video.currentTime = 0.001;
+                    const playPromise = video.play();
+                    if (playPromise !== undefined) {
+                      await playPromise.then(() => video.pause()).catch(() => {});
+                    }
+                  } catch {
+                    // Suppress autoplay policy warnings
+                  }
+
+                  const dur =
+                    video.duration && !isNaN(video.duration) && isFinite(video.duration)
+                      ? video.duration
+                      : 10.0;
+                  const w = video.videoWidth > 0 ? video.videoWidth : 1920;
+                  const h = video.videoHeight > 0 ? video.videoHeight : 1080;
+
+                  resolve({ duration: dur, width: w, height: h });
+                }
               };
 
               const onLoaded = () => {
-                const dur = video.duration && !isNaN(video.duration) && isFinite(video.duration)
-                  ? video.duration
-                  : 10.0;
-                const w = video.videoWidth || 1920;
-                const h = video.videoHeight || 1080;
-                cleanup();
-                resolve({ duration: dur, width: w, height: h });
+                metadataLoaded = true;
+                checkAndResolve();
               };
 
+              const onCanPlay = () => {
+                canPlayFired = true;
+                checkAndResolve();
+              };
+
+              // Error Listener Bindings checking MEDIA_ERR_DECODE & MEDIA_ERR_SRC_NOT_SUPPORTED
               const onError = () => {
+                if (isSettled) return;
+                isSettled = true;
                 cleanup();
+
+                let errorMsg = 'Video import fallback: standard hardware decode failed.';
+                if (video.error) {
+                  if (video.error.code === 3) {
+                    errorMsg = 'Media decode error: codec not supported by device hardware decoder.';
+                  } else if (video.error.code === 4) {
+                    errorMsg = 'Media format not supported natively by this mobile browser.';
+                  }
+                }
+
+                setToastNotice({
+                  id: `err-${Date.now()}`,
+                  type: 'warning',
+                  title: 'Decoder Compatibility Notice',
+                  message: `${errorMsg} Loaded in lightweight streaming mode.`,
+                  durationMs: 4500,
+                });
+
+                // Fallback safe values so editor never crashes
                 resolve({ duration: 10.0, width: 1920, height: 1080 });
               };
 
-              video.addEventListener('loadedmetadata', onLoaded);
-              video.addEventListener('error', onError);
-              video.src = objectUrl;
+              video.addEventListener('loadedmetadata', onLoaded, { once: true });
+              video.addEventListener('canplay', onCanPlay, { once: true });
+              video.addEventListener('error', onError, { once: true });
 
-              // Strict 5-second timeout fallback
-              setTimeout(() => {
-                cleanup();
-                resolve({ duration: 15.0, width: 1920, height: 1080 });
+              video.src = objectUrl;
+              video.load();
+
+              // 5-second timeout fallback to prevent hanging on corrupt or slow streams
+              timeoutId = setTimeout(() => {
+                if (!isSettled) {
+                  metadataLoaded = true;
+                  canPlayFired = true;
+                  checkAndResolve();
+                }
               }, 5000);
             }
           );
@@ -81,7 +168,7 @@ export function useMediaImporter() {
           height = meta.height;
         } else if (isAudio) {
           const audio = document.createElement('audio');
-          audio.preload = 'metadata';
+          audio.preload = 'auto';
 
           const audioMetaPromise = new Promise<number>((resolve) => {
             const onLoaded = () => {
@@ -91,7 +178,7 @@ export function useMediaImporter() {
               audio.src = '';
               resolve(dur);
             };
-            audio.addEventListener('loadedmetadata', onLoaded);
+            audio.addEventListener('loadedmetadata', onLoaded, { once: true });
             audio.src = objectUrl;
             setTimeout(() => resolve(30.0), 4000);
           });
@@ -108,7 +195,7 @@ export function useMediaImporter() {
           const imgMeta = await imgMetaPromise;
           width = imgMeta.width;
           height = imgMeta.height;
-          duration = 5.0; // Standard image duration
+          duration = 5.0; // Standard image clip length
         }
 
         setImportProgress(60);
@@ -122,7 +209,7 @@ export function useMediaImporter() {
             id: `notice-${Date.now()}`,
             type: 'info',
             title: 'Large File Detected',
-            message: `Large video detected (${minutes} min, ${(file.size / (1024 * 1024)).toFixed(0)}MB) — enabling high-speed proxy mode and fast-seek streaming.`,
+            message: `Large video detected (${minutes} min, ${(file.size / (1024 * 1024)).toFixed(0)}MB) — enabling fast-seek keyframe streaming and virtual memory mode.`,
             durationMs: 4500,
           });
         }
@@ -156,7 +243,7 @@ export function useMediaImporter() {
         setToastNotice({
           id: `err-${Date.now()}`,
           type: 'error',
-          title: 'Import Warning',
+          title: 'Import Notice',
           message: 'Video metadata reading had a partial timeout, imported with streaming fallback.',
           durationMs: 4000,
         });

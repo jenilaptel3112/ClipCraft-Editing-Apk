@@ -171,7 +171,7 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
     [clips, selectedClipId]
   );
 
-  const { currentTimeRef, seekTo } = useTimelinePlayback({
+  const { currentTimeRef, seekTo, unlockAudioContext } = useTimelinePlayback({
     clips,
     tracks,
     totalDuration,
@@ -265,6 +265,14 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
     const existingMedia = mediaElementsRef.current.get(selectedClip.id);
     if (existingMedia) {
       mediaElementsRef.current.set(secondPart.id, existingMedia);
+    }
+    const existingAudio = audioElementsRef.current.get(selectedClip.id);
+    if (existingAudio && selectedClip.mediaUrl) {
+      const audioCopy = new Audio(selectedClip.mediaUrl);
+      audioCopy.preload = 'auto';
+      audioElementsRef.current.set(secondPart.id, audioCopy);
+    } else if (existingAudio) {
+      audioElementsRef.current.set(secondPart.id, existingAudio);
     }
 
     const nextClips = clips.flatMap((c) =>
@@ -665,13 +673,34 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
       video.src = result.objectUrl;
       video.crossOrigin = 'anonymous';
       video.playsInline = true;
-      video.preload = 'metadata'; // Never load full 2-hour file into memory
+      video.setAttribute('webkit-playsinline', 'true');
+      video.muted = true; // Video decoding element stays muted to prevent mobile autoplay blocks
+      video.preload = 'auto';
+
+      // Mobile Video Texture Awakening Handshake:
+      // Triggers hardware decoder pipeline on mobile Safari/Chromium to prevent blank screen
+      try {
+        video.currentTime = 0.001;
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.then(() => video.pause()).catch(() => {});
+        }
+      } catch {
+        // Suppress autoplay policy warnings
+      }
+
       mediaElementsRef.current.set(clipId, video);
       proxyManager.registerMedia(clipId, file, result.objectUrl, result.width, result.height);
       proxyManager.registerOriginalElement(clipId, video);
+
+      // Create synchronized secondary audio pipeline for this video clip
+      // so video element can stay muted while audio plays cleanly through Web Audio master graph
+      const audio = new Audio(result.objectUrl);
+      audio.preload = 'auto';
+      audioElementsRef.current.set(clipId, audio);
     } else {
       const audio = new Audio(result.objectUrl);
-      audio.preload = 'metadata';
+      audio.preload = 'auto';
       audioElementsRef.current.set(clipId, audio);
     }
 
@@ -723,7 +752,11 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
       <input
         ref={fileInputRef}
         type="file"
-        accept={uploadTypeRef.current === 'audio' ? 'audio/*' : 'video/*,image/*'}
+        accept={
+          uploadTypeRef.current === 'audio'
+            ? 'audio/*'
+            : 'video/mp4,video/quicktime,video/webm,video/x-m4v,video/*,image/*'
+        }
         onChange={handleFileChange}
         className="hidden"
       />
@@ -860,7 +893,10 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
         brushWidth={brushWidth}
         brushOpacity={brushOpacity}
         brushCap={brushCap}
-        onTogglePlay={() => setIsPlaying((p) => !p)}
+        onTogglePlay={() => {
+          unlockAudioContext();
+          setIsPlaying((p) => !p);
+        }}
         onUpdateClipTransform={handleUpdateClip}
         onAddDrawingStroke={handleAddDrawingStroke}
         registerRenderTrigger={(trigger) => {
@@ -889,7 +925,10 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
       <ContextualDock
         selectedClip={selectedClip}
         isPlaying={isPlaying}
-        onTogglePlay={() => setIsPlaying((p) => !p)}
+        onTogglePlay={() => {
+          unlockAudioContext();
+          setIsPlaying((p) => !p);
+        }}
         onDeselectClip={() => {
           setSelectedClipId(null);
           setIsDrawingMode(false);
