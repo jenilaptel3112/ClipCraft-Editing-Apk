@@ -2,23 +2,18 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   Undo2,
   Redo2,
-  Settings,
   Download,
-  Check,
-  X,
-  FolderPlus,
-  RotateCcw,
 } from 'lucide-react';
 import {
   AspectRatio,
   FitMode,
   TimelineClip,
   TrackMeta,
-  TrackType,
-  ActiveDockTab,
   ColorGrading,
   TextStyle,
   ExportConfig,
+  VisualEffectType,
+  TransitionType,
 } from './types/editor';
 import {
   INITIAL_CLIPS,
@@ -26,10 +21,15 @@ import {
   DEFAULT_COLOR_GRADING,
 } from './utils/presets';
 import { soundEngine } from './utils/soundEngine';
-import { PreviewPlayer } from './components/PreviewPlayer';
-import { MultiTrackTimeline } from './components/MultiTrackTimeline';
-import { FeatureDock } from './components/FeatureDock';
-import { ExportModal } from './components/ExportModal';
+import { SimplePreviewPlayer } from './components/SimplePreviewPlayer';
+import { SimplifiedTimeline } from './components/SimplifiedTimeline';
+import { ContextualDock } from './components/ContextualDock';
+import { SimpleExportModal } from './components/SimpleExportModal';
+import { TextDrawer } from './components/TextDrawer';
+import { FilterDrawer } from './components/FilterDrawer';
+import { SpeedDrawer } from './components/SpeedDrawer';
+import { VolumeDrawer } from './components/VolumeDrawer';
+import { FormatDrawer, AudioDrawer, EffectsDrawer } from './components/QuickDrawers';
 
 interface HistorySnapshot {
   clips: TimelineClip[];
@@ -37,50 +37,54 @@ interface HistorySnapshot {
 }
 
 export default function App() {
-  // Project & Viewport State
-  const [projectTitle, setProjectTitle] = useState<string>('Neon_Horizon_Reel_Cut');
-  const [isEditingTitle, setIsEditingTitle] = useState<boolean>(false);
+  // Project & Aspect Ratio State
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
   const [fitMode, setFitMode] = useState<FitMode>('cover');
-  const [magneticSnap, setMagneticSnap] = useState<boolean>(true);
-  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
 
-  // Timeline & Undo/Redo Stack
+  // Timeline & Clip State
   const [clips, setClips] = useState<TimelineClip[]>(INITIAL_CLIPS);
   const [tracks, setTracks] = useState<TrackMeta[]>(INITIAL_TRACKS);
   const [history, setHistory] = useState<HistorySnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
 
-  // Selection & Active Bottom Dock Tab
-  const [selectedClipId, setSelectedClipId] = useState<string | null>('clip-video-1');
-  const [activeTab, setActiveTab] = useState<ActiveDockTab>('edit');
+  // Selection
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
 
-  // Playback State
+  // Playback
   const [playhead, setPlayhead] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
-  // Export & MediaRecorder State
+  // Active Bottom Sheet Drawer State
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+  const [isTextDrawerOpen, setIsTextDrawerOpen] = useState<boolean>(false);
+  const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState<boolean>(false);
+  const [isSpeedDrawerOpen, setIsSpeedDrawerOpen] = useState<boolean>(false);
+  const [isVolumeDrawerOpen, setIsVolumeDrawerOpen] = useState<boolean>(false);
+  const [isFormatDrawerOpen, setIsFormatDrawerOpen] = useState<boolean>(false);
+  const [isAudioDrawerOpen, setIsAudioDrawerOpen] = useState<boolean>(false);
+  const [isEffectsDrawerOpen, setIsEffectsDrawerOpen] = useState<boolean>(false);
+
+  // Export & MediaRecorder state
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<number>(0);
   const [exportDownloadUrl, setExportDownloadUrl] = useState<string | null>(null);
   const [exportConfig, setExportConfig] = useState<ExportConfig>({
     resolution: '1080p',
-    fps: 60,
+    fps: 30,
     format: 'webm',
   });
 
-  // Refs for Canvas, RAF loop, and uploaded HTMLVideoElement / HTMLImageElement / HTMLAudioElement
+  // Media references & canvas ref
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mediaElementsRef = useRef<Map<string, HTMLVideoElement | HTMLImageElement>>(new Map());
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const uploadTargetTrackRef = useRef<TrackType>('video');
+  const uploadTypeRef = useRef<'video' | 'audio'>('video');
   const lastFrameTimeRef = useRef<number | null>(null);
 
-  // Compute total project duration dynamically from clips
+  // Compute total duration dynamically
   const totalDuration = useMemo(() => {
-    if (clips.length === 0) return 10;
+    if (clips.length === 0) return 8;
     const maxEnd = Math.max(...clips.map((c) => c.startTime + c.duration));
     return Math.max(4, +maxEnd.toFixed(2));
   }, [clips]);
@@ -90,10 +94,10 @@ export default function App() {
     [clips, selectedClipId]
   );
 
-  // Push snapshot to Undo history before structural edits
+  // Undo / Redo history
   const commitHistory = useCallback(
     (nextClips: TimelineClip[], nextTracks: TrackMeta[] = tracks) => {
-      setHistory((prev) => [...prev.slice(-24), { clips, tracks }]);
+      setHistory((prev) => [...prev.slice(-20), { clips, tracks }]);
       setRedoStack([]);
       setClips(nextClips);
       setTracks(nextTracks);
@@ -119,12 +123,10 @@ export default function App() {
     setTracks(next.tracks);
   }, [redoStack, clips, tracks]);
 
-  // Synchronize uploaded HTMLVideoElements and HTMLAudioElements with playhead
+  // Synchronize audio / video elements and Web Audio synthesizer
   const syncMediaElements = useCallback(
     (targetTime: number, playing: boolean) => {
       clips.forEach((clip) => {
-        const trackMeta = tracks.find((t) => t.id === clip.trackId);
-        const isTrackMuted = trackMeta?.muted ?? false;
         const isClipActive =
           targetTime >= clip.startTime && targetTime < clip.startTime + clip.duration;
         const localSourceTime =
@@ -134,7 +136,7 @@ export default function App() {
         if (mediaEl && mediaEl instanceof HTMLVideoElement) {
           mediaEl.playbackRate = clip.speed;
           mediaEl.preservesPitch = clip.preservePitch;
-          mediaEl.muted = clip.muted || isTrackMuted;
+          mediaEl.muted = clip.muted;
           mediaEl.volume = Math.max(0, Math.min(1, clip.volume / 100));
 
           if (isClipActive) {
@@ -155,7 +157,7 @@ export default function App() {
         if (audioEl) {
           audioEl.playbackRate = clip.speed;
           audioEl.preservesPitch = clip.preservePitch;
-          audioEl.muted = clip.muted || isTrackMuted;
+          audioEl.muted = clip.muted;
           audioEl.volume = Math.max(0, Math.min(1, clip.volume / 100));
 
           if (isClipActive) {
@@ -172,14 +174,13 @@ export default function App() {
           }
         }
 
-        // Trigger Web Audio synth score on active synthetic audio track
+        // Web Audio synth tone playback on active audio track
         if (
           playing &&
           clip.trackId === 'audio' &&
           clip.synthAudioPreset &&
           isClipActive &&
-          !clip.muted &&
-          !isTrackMuted
+          !clip.muted
         ) {
           soundEngine.triggerTimelinePulse(
             targetTime,
@@ -191,10 +192,10 @@ export default function App() {
         }
       });
     },
-    [clips, tracks]
+    [clips]
   );
 
-  // Real-time 60fps requestAnimationFrame playback loop
+  // Playback requestAnimationFrame loop
   useEffect(() => {
     if (!isPlaying) {
       lastFrameTimeRef.current = null;
@@ -229,7 +230,6 @@ export default function App() {
     return () => cancelAnimationFrame(animationFrameId);
   }, [isPlaying, totalDuration, syncMediaElements, playhead]);
 
-  // Seek handler
   const handleSeek = useCallback(
     (time: number) => {
       const clamped = Math.max(0, Math.min(totalDuration, time));
@@ -239,12 +239,12 @@ export default function App() {
     [totalDuration, isPlaying, syncMediaElements]
   );
 
-  // Split selected clip at current playhead position
-  const handleSplitAtPlayhead = useCallback(() => {
+  // Dedicated Split action
+  const handleSplitClip = useCallback(() => {
     if (!selectedClip) return;
     if (
-      playhead <= selectedClip.startTime + 0.25 ||
-      playhead >= selectedClip.startTime + selectedClip.duration - 0.25
+      playhead <= selectedClip.startTime + 0.2 ||
+      playhead >= selectedClip.startTime + selectedClip.duration - 0.2
     ) {
       return;
     }
@@ -264,13 +264,15 @@ export default function App() {
       name: `${selectedClip.name} (Part 2)`,
       startTime: +playhead.toFixed(2),
       duration: secondDuration,
-      sourceStartOffset: +(selectedClip.sourceStartOffset + firstDuration * selectedClip.speed).toFixed(2),
+      sourceStartOffset: +(
+        selectedClip.sourceStartOffset +
+        firstDuration * selectedClip.speed
+      ).toFixed(2),
       keyframes: selectedClip.keyframes
         .filter((k) => k.timeOffset > firstDuration)
         .map((k) => ({ ...k, timeOffset: +(k.timeOffset - firstDuration).toFixed(2) })),
     };
 
-    // Clone media reference if uploaded video/image
     const existingMedia = mediaElementsRef.current.get(selectedClip.id);
     if (existingMedia) {
       mediaElementsRef.current.set(secondPart.id, existingMedia);
@@ -283,32 +285,12 @@ export default function App() {
     setSelectedClipId(secondPart.id);
   }, [selectedClip, playhead, clips, commitHistory]);
 
-  // Duplicate selected clip
-  const handleDuplicateSelected = useCallback(() => {
-    if (!selectedClip) return;
-    const newId = `clip-dup-${Date.now()}`;
-    const duplicated: TimelineClip = {
-      ...selectedClip,
-      id: newId,
-      name: `${selectedClip.name} Copy`,
-      startTime: +(selectedClip.startTime + selectedClip.duration).toFixed(2),
-    };
-
-    const existingMedia = mediaElementsRef.current.get(selectedClip.id);
-    if (existingMedia) {
-      mediaElementsRef.current.set(newId, existingMedia);
-    }
-
-    commitHistory([...clips, duplicated]);
-    setSelectedClipId(newId);
-  }, [selectedClip, clips, commitHistory]);
-
-  // Delete selected clip
-  const handleDeleteSelected = useCallback(() => {
+  // Delete action
+  const handleDeleteClip = useCallback(() => {
     if (!selectedClipId) return;
     const nextClips = clips.filter((c) => c.id !== selectedClipId);
     commitHistory(nextClips);
-    setSelectedClipId(nextClips[0]?.id || null);
+    setSelectedClipId(null);
   }, [selectedClipId, clips, commitHistory]);
 
   // Update clip properties
@@ -321,7 +303,7 @@ export default function App() {
     []
   );
 
-  // Update clip timing from timeline drag / trim / slip
+  // Update clip timing
   const handleUpdateClipTiming = useCallback(
     (
       clipId: string,
@@ -345,13 +327,13 @@ export default function App() {
     []
   );
 
-  // Update color grading
+  // Color grading update
   const handleUpdateColorGrading = useCallback(
-    (clipId: string, gradingUpdates: Partial<ColorGrading>) => {
+    (clipId: string, updates: Partial<ColorGrading>) => {
       setClips((prev) =>
         prev.map((c) =>
           c.id === clipId
-            ? { ...c, colorGrading: { ...c.colorGrading, ...gradingUpdates } }
+            ? { ...c, colorGrading: { ...c.colorGrading, ...updates } }
             : c
         )
       );
@@ -359,102 +341,81 @@ export default function App() {
     []
   );
 
-  // Update text style
+  // Text Style update
   const handleUpdateTextStyle = useCallback(
-    (clipId: string, styleUpdates: Partial<TextStyle>) => {
+    (updates: Partial<TextStyle>) => {
+      if (!selectedClipId) return;
       setClips((prev) =>
         prev.map((c) =>
-          c.id === clipId && c.textStyle
-            ? { ...c, textStyle: { ...c.textStyle, ...styleUpdates } }
+          c.id === selectedClipId && c.textStyle
+            ? { ...c, textStyle: { ...c.textStyle, ...updates } }
             : c
         )
       );
     },
-    []
+    [selectedClipId]
   );
 
-  // Add new Kinetic Typography clip at playhead
-  const handleAddTextClip = useCallback(() => {
-    const newId = `clip-text-${Date.now()}`;
-    const newClip: TimelineClip = {
-      id: newId,
-      trackId: 'text',
-      name: 'Title: NEW KINETIC TEXT',
-      startTime: +playhead.toFixed(2),
-      duration: 3.2,
-      sourceStartOffset: 0,
-      sourceMaxDuration: 15,
-      mediaType: 'text',
-      accentColor: '#F59E0B',
-      x: 0,
-      y: 0,
-      scale: 1,
-      rotation: 0,
-      opacity: 1,
-      colorGrading: { ...DEFAULT_COLOR_GRADING },
-      keyframes: [],
-      textStyle: {
-        content: 'NEW KINETIC TITLE',
-        fontFamily: 'Bricolage Grotesque',
-        fontSize: 42,
-        fontWeight: '700',
-        color: '#FFFFFF',
-        strokeColor: '#0B0C10',
-        strokeWidth: 3,
-        shadowBlur: 14,
-        bgEnabled: true,
-        bgColor: '#F59E0B',
-        animation: 'pop',
-      },
-      transitionIn: { type: 'none', duration: 0.3 },
-      visualEffect: 'none',
-      speed: 1,
-      preservePitch: true,
-      volume: 0,
-      muted: true,
-      fadeIn: 0.2,
-      fadeOut: 0.2,
-    };
-    commitHistory([...clips, newClip]);
-    setSelectedClipId(newId);
-    setActiveTab('text');
-  }, [playhead, clips, commitHistory]);
+  // Add new styled Text clip
+  const handleAddTextWithPreset = useCallback(
+    (presetStyle: {
+      fontFamily: string;
+      fontSize: number;
+      color: string;
+      strokeColor: string;
+      strokeWidth: number;
+      bgEnabled: boolean;
+      bgColor: string;
+      animation: 'none' | 'fade' | 'pop' | 'slide-up' | 'typewriter';
+    }) => {
+      const newId = `clip-text-${Date.now()}`;
+      const newClip: TimelineClip = {
+        id: newId,
+        trackId: 'text',
+        name: 'Title: NEW TEXT',
+        startTime: +playhead.toFixed(2),
+        duration: 3.5,
+        sourceStartOffset: 0,
+        sourceMaxDuration: 15,
+        mediaType: 'text',
+        accentColor: '#F59E0B',
+        x: 0,
+        y: 0,
+        scale: 1,
+        rotation: 0,
+        opacity: 1,
+        colorGrading: { ...DEFAULT_COLOR_GRADING },
+        keyframes: [],
+        textStyle: {
+          content: 'NEW HEADLINE',
+          fontFamily: presetStyle.fontFamily,
+          fontSize: presetStyle.fontSize,
+          fontWeight: '700',
+          color: presetStyle.color,
+          strokeColor: presetStyle.strokeColor,
+          strokeWidth: presetStyle.strokeWidth,
+          shadowBlur: 14,
+          bgEnabled: presetStyle.bgEnabled,
+          bgColor: presetStyle.bgColor,
+          animation: presetStyle.animation,
+        },
+        transitionIn: { type: 'none', duration: 0.3 },
+        visualEffect: 'none',
+        speed: 1,
+        preservePitch: true,
+        volume: 0,
+        muted: true,
+        fadeIn: 0.2,
+        fadeOut: 0.2,
+      };
 
-  // Add synthetic B-Roll PIP Overlay clip at playhead
-  const handleAddPipOverlayClip = useCallback(() => {
-    const newId = `clip-pip-${Date.now()}`;
-    const newClip: TimelineClip = {
-      id: newId,
-      trackId: 'overlay',
-      name: 'PIP_Prism_Overlay.mov',
-      startTime: +playhead.toFixed(2),
-      duration: 4.0,
-      sourceStartOffset: 0,
-      sourceMaxDuration: 15,
-      mediaType: 'synthetic',
-      syntheticScene: 'prism-bokeh',
-      accentColor: '#8B5CF6',
-      x: -22,
-      y: 22,
-      scale: 0.42,
-      rotation: 0,
-      opacity: 0.92,
-      colorGrading: { ...DEFAULT_COLOR_GRADING },
-      keyframes: [],
-      transitionIn: { type: 'zoom-in', duration: 0.5 },
-      visualEffect: 'none',
-      speed: 1,
-      preservePitch: true,
-      volume: 0,
-      muted: true,
-      fadeIn: 0.2,
-      fadeOut: 0.2,
-    };
-    commitHistory([...clips, newClip]);
-    setSelectedClipId(newId);
-  }, [playhead, clips, commitHistory]);
+      commitHistory([...clips, newClip]);
+      setSelectedClipId(newId);
+    },
+    [playhead, clips, commitHistory]
+  );
 
-  // Add SFX clip on audio track at playhead
+  // Add SFX
   const handleAddSfxClip = useCallback(
     (sfxType: 'whoosh' | 'sub-drop' | 'shutter' | 'glitch') => {
       const newId = `clip-sfx-${Date.now()}`;
@@ -484,7 +445,7 @@ export default function App() {
         muted: false,
         fadeIn: 0.1,
         fadeOut: 0.3,
-        waveform: [0.3, 0.95, 0.88, 0.65, 0.45, 0.32, 0.2, 0.12],
+        waveform: [0.3, 0.9, 0.8, 0.6, 0.4, 0.3, 0.2],
       };
       commitHistory([...clips, newClip]);
       setSelectedClipId(newId);
@@ -492,53 +453,7 @@ export default function App() {
     [playhead, clips, commitHistory]
   );
 
-  // Add or update keyframe at current playhead offset on selected clip
-  const handleAddOrUpdateKeyframe = useCallback(() => {
-    if (!selectedClip) return;
-    const offset = Math.max(
-      0,
-      Math.min(selectedClip.duration, +(playhead - selectedClip.startTime).toFixed(2))
-    );
-
-    const existingIdx = selectedClip.keyframes.findIndex(
-      (k) => Math.abs(k.timeOffset - offset) < 0.08
-    );
-
-    const newKf = {
-      id: `kf-${Date.now()}`,
-      timeOffset: offset,
-      x: selectedClip.x,
-      y: selectedClip.y,
-      scale: selectedClip.scale,
-      rotation: selectedClip.rotation,
-      opacity: selectedClip.opacity,
-      easing: 'ease-in-out' as const,
-    };
-
-    const nextKeyframes =
-      existingIdx >= 0
-        ? selectedClip.keyframes.map((k, idx) => (idx === existingIdx ? newKf : k))
-        : [...selectedClip.keyframes, newKf];
-
-    handleUpdateClip(selectedClip.id, { keyframes: nextKeyframes });
-  }, [selectedClip, playhead, handleUpdateClip]);
-
-  const handleRemoveKeyframe = useCallback(
-    (keyframeId: string) => {
-      if (!selectedClip) return;
-      handleUpdateClip(selectedClip.id, {
-        keyframes: selectedClip.keyframes.filter((k) => k.id !== keyframeId),
-      });
-    },
-    [selectedClip, handleUpdateClip]
-  );
-
-  // Local file upload (video, image, audio) via Object URL
-  const triggerMediaUpload = (targetTrack: TrackType) => {
-    uploadTargetTrackRef.current = targetTrack;
-    fileInputRef.current?.click();
-  };
-
+  // Media upload handler
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -546,7 +461,7 @@ export default function App() {
     const clipId = `clip-upload-${Date.now()}`;
     const isAudio = file.type.startsWith('audio/');
     const isImage = file.type.startsWith('image/');
-    const targetTrack: TrackType = isAudio ? 'audio' : uploadTargetTrackRef.current;
+    const targetTrack = isAudio ? 'audio' : 'video';
 
     if (isImage) {
       const img = new Image();
@@ -576,15 +491,10 @@ export default function App() {
       sourceMaxDuration: 30,
       mediaType: isAudio ? 'audio' : isImage ? 'image' : 'video',
       mediaUrl: objectUrl,
-      accentColor:
-        targetTrack === 'audio'
-          ? '#10B981'
-          : targetTrack === 'overlay'
-          ? '#8B5CF6'
-          : '#3B82F6',
+      accentColor: targetTrack === 'audio' ? '#10B981' : '#3B82F6',
       x: 0,
       y: 0,
-      scale: targetTrack === 'overlay' ? 0.5 : 1,
+      scale: 1,
       rotation: 0,
       opacity: 1,
       colorGrading: { ...DEFAULT_COLOR_GRADING },
@@ -597,9 +507,7 @@ export default function App() {
       muted: false,
       fadeIn: 0.2,
       fadeOut: 0.2,
-      waveform: isAudio
-        ? [0.4, 0.7, 0.85, 0.6, 0.9, 0.5, 0.75, 0.8, 0.45, 0.68, 0.92, 0.55]
-        : undefined,
+      waveform: isAudio ? [0.4, 0.7, 0.85, 0.6, 0.9, 0.5, 0.75, 0.8] : undefined,
     };
 
     commitHistory([...clips, newClip]);
@@ -607,7 +515,7 @@ export default function App() {
     e.target.value = '';
   };
 
-  // Real-Time Canvas captureStream + MediaRecorder Export Pipeline
+  // Export pipeline
   const handleStartExport = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -629,25 +537,22 @@ export default function App() {
       recorder = new MediaRecorder(stream, { mimeType });
 
       recorder.ondataavailable = (ev) => {
-        if (ev.data && ev.data.size > 0) {
-          chunks.push(ev.data);
-        }
+        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
       };
 
       recorder.onstop = () => {
         const blob = new Blob(chunks, { type: mimeType });
-        const url = URL.createObjectURL(blob);
-        setExportDownloadUrl(url);
+        setExportDownloadUrl(URL.createObjectURL(blob));
         setIsExporting(false);
         setIsPlaying(false);
       };
 
       recorder.start(100);
     } catch {
-      // Fallback simulation if browser blocks captureStream
+      // Fallback
     }
 
-    const exportDurationMs = Math.min(4500, totalDuration * 350);
+    const exportDurationMs = Math.min(3800, totalDuration * 300);
     const startStamp = performance.now();
 
     const interval = setInterval(() => {
@@ -660,9 +565,7 @@ export default function App() {
         if (recorder && recorder.state !== 'inactive') {
           recorder.stop();
         } else {
-          const fallbackBlob = new Blob(['ClipCraft Render Stream'], {
-            type: 'video/webm',
-          });
+          const fallbackBlob = new Blob(['ClipCraft Master Render'], { type: 'video/webm' });
           setExportDownloadUrl(URL.createObjectURL(fallbackBlob));
           setIsExporting(false);
           setIsPlaying(false);
@@ -671,138 +574,90 @@ export default function App() {
     }, 80);
   }, [exportConfig.fps, totalDuration]);
 
-  // Keyboard shortcuts (Space for Play/Pause, S for Split)
+  // Keyboard shortcut Space for play/pause
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (
-        document.activeElement?.tagName === 'INPUT' ||
-        document.activeElement?.tagName === 'SELECT'
-      ) {
-        return;
-      }
+      if (document.activeElement?.tagName === 'INPUT') return;
       if (e.code === 'Space') {
         e.preventDefault();
         setIsPlaying((p) => !p);
-      } else if (e.key === 's' || e.key === 'S') {
-        e.preventDefault();
-        handleSplitAtPlayhead();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleSplitAtPlayhead]);
+  }, []);
 
   return (
     <div className="flex flex-col w-full h-dvh bg-[#0B0C10] text-slate-100 overflow-hidden select-none">
-      {/* Hidden File Input for Video, Image, and Audio Import */}
+      {/* Hidden File Input for Video/Audio Import */}
       <input
         ref={fileInputRef}
         type="file"
-        accept="video/*,image/*,audio/*"
+        accept={uploadTypeRef.current === 'audio' ? 'audio/*' : 'video/*,image/*'}
         onChange={handleFileChange}
         className="hidden"
       />
 
-      {/* TOP BAR: Project Title, Undo/Redo, Aspect Ratio Selector, Settings, and Export */}
-      <header className="flex items-center justify-between gap-4 px-3.5 py-2.5 bg-[#0F1118] border-b border-white/[0.07] shrink-0 z-30">
-        {/* Zone 1: Brand & Editable Project Title */}
-        <div className="flex items-center gap-2.5 min-w-0 shrink-0">
-          <span className="font-display font-bold text-sm sm:text-base tracking-tight text-white whitespace-nowrap shrink-0">
-            ClipCraft Studio
+      {/* TOP BAR: Clean, Minimal, Non-Cluttered with One-Tap Aspect Ratio and Instant Export */}
+      <header className="flex items-center justify-between px-3 py-2 bg-[#0F1118] border-b border-white/[0.08] shrink-0 z-20">
+        {/* Brand & Undo/Redo */}
+        <div className="flex items-center gap-1.5">
+          <span className="font-display font-bold text-sm tracking-tight text-white whitespace-nowrap">
+            ClipCraft
           </span>
-          <span className="text-slate-600 hidden sm:inline">/</span>
-          {isEditingTitle ? (
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                value={projectTitle}
-                onChange={(e) => setProjectTitle(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && setIsEditingTitle(false)}
-                className="px-2 py-0.5 text-xs bg-[#181B26] border border-amber-400 rounded text-white focus:outline-none w-36"
-                autoFocus
-              />
-              <button
-                onClick={() => setIsEditingTitle(false)}
-                className="p-1 text-emerald-400 hover:text-emerald-300"
-              >
-                <Check className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setIsEditingTitle(true)}
-              className="hidden sm:inline-block text-xs font-medium text-slate-300 hover:text-white truncate max-w-[160px]"
-              title="Click to rename project"
-            >
-              {projectTitle}
-            </button>
-          )}
-        </div>
 
-        {/* Zone 2: Undo / Redo & Aspect Ratio Selector (9:16, 16:9, 1:1, 4:5) */}
-        <div className="flex items-center gap-2 overflow-x-auto">
-          <div className="flex items-center gap-0.5 bg-white/[0.04] rounded-lg p-0.5 border border-white/[0.06]">
+          <div className="flex items-center gap-0.5 ml-2">
             <button
               onClick={handleUndo}
               disabled={history.length === 0}
-              className="p-1.5 rounded-md text-slate-300 hover:text-white hover:bg-white/[0.06] disabled:opacity-35 transition-colors"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white disabled:opacity-30 active:scale-95 transition-all"
               title="Undo"
             >
-              <Undo2 className="w-3.5 h-3.5" />
+              <Undo2 className="w-4 h-4" />
             </button>
             <button
               onClick={handleRedo}
               disabled={redoStack.length === 0}
-              className="p-1.5 rounded-md text-slate-300 hover:text-white hover:bg-white/[0.06] disabled:opacity-35 transition-colors"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white disabled:opacity-30 active:scale-95 transition-all"
               title="Redo"
             >
-              <Redo2 className="w-3.5 h-3.5" />
+              <Redo2 className="w-4 h-4" />
             </button>
           </div>
-
-          {/* Aspect Ratio Segmented Selector */}
-          <div className="flex items-center gap-0.5 bg-white/[0.04] rounded-lg p-0.5 border border-white/[0.06]">
-            {(['9:16', '16:9', '1:1', '4:5'] as AspectRatio[]).map((ratio) => (
-              <button
-                key={ratio}
-                onClick={() => setAspectRatio(ratio)}
-                className={`px-2 py-1 rounded-md text-[11px] font-mono-tabular font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                  aspectRatio === ratio
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {ratio}
-              </button>
-            ))}
-          </div>
         </div>
 
-        {/* Zone 3: Settings & Primary Export Button */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setShowSettingsModal(true)}
-            className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
-            title="Project Settings"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => {
-              setExportDownloadUrl(null);
-              setIsExportModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 text-slate-950 hover:bg-amber-400 active:scale-95 transition-all whitespace-nowrap shrink-0 shadow-sm"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Export</span>
-          </button>
+        {/* Center: Single-tap Aspect Ratio Pill Switcher */}
+        <div className="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-xl border border-white/[0.06]">
+          {(['9:16', '16:9', '1:1'] as AspectRatio[]).map((r) => (
+            <button
+              key={r}
+              onClick={() => setAspectRatio(r)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-mono-tabular font-bold transition-all ${
+                aspectRatio === r
+                  ? 'bg-amber-500 text-slate-950 shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {r}
+            </button>
+          ))}
         </div>
+
+        {/* Right: Single Prominent High-Contrast Export Button */}
+        <button
+          onClick={() => {
+            setExportDownloadUrl(null);
+            setIsExportModalOpen(true);
+          }}
+          className="min-h-[38px] px-4 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md transition-all shrink-0"
+        >
+          <Download className="w-3.5 h-3.5" />
+          <span>Export</span>
+        </button>
       </header>
 
-      {/* MIDDLE SECTION: Responsive HTML5 Canvas Preview Player */}
-      <PreviewPlayer
+      {/* MIDDLE SECTION: Clean Zero-Clutter Video Preview Monitor */}
+      <SimplePreviewPlayer
         canvasRef={canvasRef}
         playhead={playhead}
         totalDuration={totalDuration}
@@ -814,151 +669,123 @@ export default function App() {
         mediaElements={mediaElementsRef.current}
         selectedClipId={selectedClipId}
         onTogglePlay={() => setIsPlaying((p) => !p)}
-        onSeek={handleSeek}
         onUpdateClipTransform={handleUpdateClip}
-        onCycleFitMode={() =>
+        onSelectClip={setSelectedClipId}
+      />
+
+      {/* LOWER MIDDLE: Simplified Two-Track Visual Timeline with Auto-Magnetic Snapping & Wide Trim Handles */}
+      <SimplifiedTimeline
+        clips={clips}
+        playhead={playhead}
+        totalDuration={totalDuration}
+        selectedClipId={selectedClipId}
+        onSelectClip={setSelectedClipId}
+        onSeek={handleSeek}
+        onUpdateClipTiming={handleUpdateClipTiming}
+      />
+
+      {/* BOTTOM QUADRANT: Ergonomic Context-Sensitive Dock */}
+      <ContextualDock
+        selectedClip={selectedClip}
+        isPlaying={isPlaying}
+        onTogglePlay={() => setIsPlaying((p) => !p)}
+        onDeselectClip={() => setSelectedClipId(null)}
+        onOpenAddMedia={() => {
+          uploadTypeRef.current = 'video';
+          fileInputRef.current?.click();
+        }}
+        onOpenAudioDrawer={() => setIsAudioDrawerOpen(true)}
+        onOpenTextDrawer={() => setIsTextDrawerOpen(true)}
+        onOpenEffectsDrawer={() => setIsEffectsDrawerOpen(true)}
+        onOpenFormatDrawer={() => setIsFormatDrawerOpen(true)}
+        onSplitClip={handleSplitClip}
+        onOpenSpeedDrawer={() => setIsSpeedDrawerOpen(true)}
+        onOpenFilterDrawer={() => setIsFilterDrawerOpen(true)}
+        onOpenVolumeDrawer={() => setIsVolumeDrawerOpen(true)}
+        onDeleteClip={handleDeleteClip}
+      />
+
+      {/* BOTTOM SHEET DRAWERS (40% Viewport Modal Overlays) */}
+      <SimpleExportModal
+        isOpen={isExportModalOpen}
+        isExporting={isExporting}
+        progress={exportProgress}
+        downloadUrl={exportDownloadUrl}
+        exportConfig={exportConfig}
+        onUpdateConfig={(updates) => setExportConfig((prev) => ({ ...prev, ...updates }))}
+        onStartExport={handleStartExport}
+        onClose={() => setIsExportModalOpen(false)}
+      />
+
+      <TextDrawer
+        isOpen={isTextDrawerOpen}
+        selectedClip={selectedClip}
+        onClose={() => setIsTextDrawerOpen(false)}
+        onAddTextClipWithStyle={handleAddTextWithPreset}
+        onUpdateTextStyle={handleUpdateTextStyle}
+      />
+
+      <FilterDrawer
+        isOpen={isFilterDrawerOpen}
+        selectedClip={selectedClip}
+        onClose={() => setIsFilterDrawerOpen(false)}
+        onUpdateColorGrading={handleUpdateColorGrading}
+      />
+
+      <SpeedDrawer
+        isOpen={isSpeedDrawerOpen}
+        selectedClip={selectedClip}
+        onClose={() => setIsSpeedDrawerOpen(false)}
+        onUpdateSpeed={(clipId, speed, preservePitch) =>
+          handleUpdateClip(clipId, { speed, preservePitch })
+        }
+      />
+
+      <VolumeDrawer
+        isOpen={isVolumeDrawerOpen}
+        selectedClip={selectedClip}
+        onClose={() => setIsVolumeDrawerOpen(false)}
+        onUpdateVolume={(clipId, volume, muted) =>
+          handleUpdateClip(clipId, { volume, muted })
+        }
+      />
+
+      <FormatDrawer
+        isOpen={isFormatDrawerOpen}
+        aspectRatio={aspectRatio}
+        fitMode={fitMode}
+        onClose={() => setIsFormatDrawerOpen(false)}
+        onSelectAspectRatio={setAspectRatio}
+        onToggleFitMode={() =>
           setFitMode((prev) =>
             prev === 'cover' ? 'contain' : prev === 'contain' ? 'fill' : 'cover'
           )
         }
       />
 
-      {/* LOWER MIDDLE: Multi-Track Magnetic Timeline */}
-      <MultiTrackTimeline
-        clips={clips}
-        tracks={tracks}
-        playhead={playhead}
-        totalDuration={totalDuration}
-        selectedClipId={selectedClipId}
-        magneticSnap={magneticSnap}
-        onSelectClip={setSelectedClipId}
-        onSeek={handleSeek}
-        onSplitAtPlayhead={handleSplitAtPlayhead}
-        onDuplicateSelected={handleDuplicateSelected}
-        onDeleteSelected={handleDeleteSelected}
-        onToggleMagneticSnap={() => setMagneticSnap((s) => !s)}
-        onToggleTrackMute={(trackId) =>
-          setTracks((prev) =>
-            prev.map((t) => (t.id === trackId ? { ...t, muted: !t.muted } : t))
-          )
-        }
-        onToggleTrackVisible={(trackId) =>
-          setTracks((prev) =>
-            prev.map((t) => (t.id === trackId ? { ...t, visible: !t.visible } : t))
-          )
-        }
-        onToggleTrackLock={(trackId) =>
-          setTracks((prev) =>
-            prev.map((t) => (t.id === trackId ? { ...t, locked: !t.locked } : t))
-          )
-        }
-        onUpdateClipTiming={handleUpdateClipTiming}
-        onTriggerMediaUpload={triggerMediaUpload}
+      <AudioDrawer
+        isOpen={isAudioDrawerOpen}
+        onClose={() => setIsAudioDrawerOpen(false)}
+        onImportAudio={() => {
+          uploadTypeRef.current = 'audio';
+          fileInputRef.current?.click();
+        }}
+        onAddSfx={handleAddSfxClip}
       />
 
-      {/* BOTTOM BAR: Tabbed Contextual Feature Dock */}
-      <FeatureDock
-        activeTab={activeTab}
-        selectedClip={selectedClip}
-        playhead={playhead}
-        onSelectTab={setActiveTab}
-        onUpdateClip={handleUpdateClip}
-        onUpdateColorGrading={handleUpdateColorGrading}
-        onUpdateTextStyle={handleUpdateTextStyle}
-        onAddTextClip={handleAddTextClip}
-        onAddPipOverlayClip={handleAddPipOverlayClip}
-        onAddSfxClip={handleAddSfxClip}
-        onAddOrUpdateKeyframe={handleAddOrUpdateKeyframe}
-        onRemoveKeyframe={handleRemoveKeyframe}
-        onSplitAtPlayhead={handleSplitAtPlayhead}
-        onDuplicateSelected={handleDuplicateSelected}
-        onDeleteSelected={handleDeleteSelected}
-        onTriggerMediaUpload={triggerMediaUpload}
+      <EffectsDrawer
+        isOpen={isEffectsDrawerOpen}
+        onClose={() => setIsEffectsDrawerOpen(false)}
+        onApplyEffect={(effect: VisualEffectType) => {
+          if (selectedClipId) handleUpdateClip(selectedClipId, { visualEffect: effect });
+        }}
+        onApplyTransition={(transition: TransitionType) => {
+          if (selectedClipId)
+            handleUpdateClip(selectedClipId, {
+              transitionIn: { type: transition, duration: 0.5 },
+            });
+        }}
       />
-
-      {/* EXPORT & RENDER MODAL */}
-      <ExportModal
-        isOpen={isExportModalOpen}
-        isExporting={isExporting}
-        progress={exportProgress}
-        exportConfig={exportConfig}
-        downloadUrl={exportDownloadUrl}
-        onUpdateConfig={(updates) =>
-          setExportConfig((prev) => ({ ...prev, ...updates }))
-        }
-        onStartExport={handleStartExport}
-        onClose={() => setIsExportModalOpen(false)}
-      />
-
-      {/* PROJECT SETTINGS MODAL */}
-      {showSettingsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-2xl bg-[#12151E] border border-white/10 p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold text-white font-display">
-                Studio Project Settings
-              </h2>
-              <button
-                onClick={() => setShowSettingsModal(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-400 mb-1">Project Name</label>
-                <input
-                  type="text"
-                  value={projectTitle}
-                  onChange={(e) => setProjectTitle(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-[#181B26] border border-white/10 text-white focus:outline-none focus:border-amber-400"
-                />
-              </div>
-
-              <div className="flex items-center justify-between py-2 border-t border-white/10">
-                <span className="text-slate-300">Magnetic Timeline Snapping</span>
-                <button
-                  onClick={() => setMagneticSnap((s) => !s)}
-                  className={`px-3 py-1 rounded-md font-semibold ${
-                    magneticSnap
-                      ? 'bg-amber-500 text-slate-950'
-                      : 'bg-white/10 text-slate-400'
-                  }`}
-                >
-                  {magneticSnap ? 'Enabled' : 'Disabled'}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between py-2 border-t border-white/10">
-                <span className="text-slate-300">Reset Demo Sample Project</span>
-                <button
-                  onClick={() => {
-                    commitHistory(INITIAL_CLIPS, INITIAL_TRACKS);
-                    setSelectedClipId('clip-video-1');
-                    setPlayhead(0);
-                    setShowSettingsModal(false);
-                  }}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-500/15 text-rose-300 hover:bg-rose-500/25"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Restore Defaults</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2 border-t border-white/10">
-              <button
-                onClick={() => setShowSettingsModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500 text-slate-950 hover:bg-amber-400"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
