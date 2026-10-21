@@ -1,4 +1,27 @@
-export type AspectRatio = '9:16' | '16:9' | '1:1' | '4:5';
+export type AspectRatio = '9:16' | '16:9' | '1:1' | '4:5' | '21:9' | '4:3' | 'custom';
+export type ResolutionTier = '720p' | '1080p' | '1440p' | '4k';
+export type ProjectFrameRate = 24 | 25 | 30 | 50 | 60;
+export type ProjectSampleRate = 44100 | 48000;
+export type TimecodeDisplayMode = 'frames' | 'hmsf' | 'compact';
+
+export interface ProjectSettings {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastModified: number;
+  // Spatial Dimensions
+  aspectRatio: '9:16' | '16:9' | '1:1' | '4:5' | '21:9' | '4:3' | 'custom';
+  customDimensions?: { width: number; height: number };
+  resolutionTier: '720p' | '1080p' | '1440p' | '4k';
+  // Temporal & Audio Settings
+  frameRate: 24 | 25 | 30 | 50 | 60;
+  sampleRate: 44100 | 48000;
+  // Background & Compositing
+  backgroundColor: string; // Hex color for canvas letterboxing
+  backgroundBlurFallback: boolean; // Auto-blur duplicate background for mismatched aspect ratios
+  timecodeDisplay: 'frames' | 'hmsf' | 'compact';
+}
+
 export type FitMode = 'cover' | 'contain' | 'fill';
 export type TrackType = 'video' | 'overlay' | 'text' | 'audio';
 export type SyntheticSceneType =
@@ -45,6 +68,38 @@ export interface ColorGrading {
   lutPreset: string;  // 'none' | 'teal-orange' | 'noir' | 'vintage-80s' | 'cyberpunk' | 'clean-warm' | 'kodak-gold'
 }
 
+// Custom FX Lab Types
+export type CustomFxNodeType =
+  | 'brightness'
+  | 'contrast'
+  | 'saturation'
+  | 'hue'
+  | 'invert'
+  | 'sepia'
+  | 'camera-shake'
+  | 'rgb-split'
+  | 'lens-distortion'
+  | 'film-grain'
+  | 'white-strobe'
+  | 'edge-glow'
+  | 'vignette';
+
+export interface CustomFxNode {
+  id: string;
+  type: CustomFxNodeType;
+  enabled: boolean;
+  params: Record<string, number>;
+}
+
+export interface CustomFxPreset {
+  id: string;
+  name: string;
+  masterIntensity: number; // 0 to 100
+  thumbnail?: string;
+  nodes: CustomFxNode[];
+  createdAt: number;
+}
+
 // Video Effects
 export type VideoEffectType =
   | 'none'
@@ -58,7 +113,8 @@ export type VideoEffectType =
   | 'white-strobe'
   | 'film-grain'
   | 'lens-blur'
-  | 'bw-pop';
+  | 'bw-pop'
+  | 'custom-compound';
 
 export type VisualEffectType = VideoEffectType;
 
@@ -80,12 +136,15 @@ export interface VideoEffectConfig {
   speed: number;     // 0.5 to 3.0 (default 1.0)
   glow: number;      // 0 to 100 (default 50)
   blur: number;      // 0 to 30 (default 10)
+  customPreset?: CustomFxPreset;
 }
 
-// Text Animations (In, Out, Loop) & Viral Presets
-export type TextInAnimation = 'none' | 'typewriter' | 'pop-bounce' | 'slide-up' | 'fade';
-export type TextOutAnimation = 'none' | 'slide-down' | 'zoom-out' | 'glitch-dissolve';
-export type TextLoopAnimation = 'none' | 'heartbeat' | 'float' | 'neon-flicker';
+// Pro Typography Suite: Animations, Backgrounds, Metrics & Fonts
+export type TextBackgroundShape = 'none' | 'rounded-pill' | 'sharp-box' | 'underline-highlight';
+export type TextGradientDirection = '90deg' | '180deg' | '45deg';
+export type TextInAnimation = 'none' | 'typewriter' | 'pop-bounce' | 'spring-pop' | 'slide-up' | 'slide-blur' | 'fade';
+export type TextOutAnimation = 'none' | 'slide-down' | 'zoom-out' | 'glitch-dissolve' | 'glitch-wipe' | 'shrink-drop';
+export type TextLoopAnimation = 'none' | 'heartbeat' | 'pulse' | 'float' | 'neon-flicker' | 'breathing' | 'karaoke-wave';
 export type TextPresetStyle = 'none' | 'karaoke-active' | 'bouncy-modern' | 'minimal' | 'bold-stroke';
 
 export interface TextStyle {
@@ -94,22 +153,58 @@ export interface TextStyle {
   fontSize: number;
   fontWeight: '400' | '600' | '700' | '800';
   color: string;
+  opacity?: number; // 0 to 1
+
+  // Gradient Fill
+  gradientEnabled?: boolean;
+  gradientStart?: string;
+  gradientEnd?: string;
+  gradientDirection?: TextGradientDirection;
+
+  // Background / Pill Box
+  bgEnabled: boolean;
+  bgShape?: TextBackgroundShape;
+  bgColor: string;
+  bgOpacity?: number; // 0 to 1
+  bgRadius: number; // corner radius in px
+  bgPaddingX?: number; // horizontal padding in px
+  bgPaddingY?: number; // vertical padding in px
+  bgPadding: number; // legacy fallback
+
+  // Spacing & Metrics
+  letterSpacing?: number; // -5 to +20 px
+  lineHeight?: number;    // 0.8 to 2.5 multiplier
+  textAlign?: 'left' | 'center' | 'right' | 'justify';
+
+  // Stroke & Outline
   strokeColor: string;
-  strokeWidth: number;
+  strokeWidth: number; // 0 to 15px
+
+  // Shadow & Glow
   shadowBlur: number;
   shadowDistance: number;
+  shadowOffsetX?: number; // -20 to +20px
+  shadowOffsetY?: number; // -20 to +20px
   shadowColor: string;
-  bgEnabled: boolean;
-  bgColor: string;
-  bgRadius: number; // corner radius in px
-  bgPadding: number; // internal padding in px
+  shadowOpacity?: number; // 0 to 1
+  glowMode?: boolean;     // high blur radius, screen blend mode
 
   // Animations
   inAnimation: TextInAnimation;
+  inDuration?: number;   // 0.1s to 2.0s
   outAnimation: TextOutAnimation;
+  outDuration?: number;  // 0.1s to 2.0s
   loopAnimation: TextLoopAnimation;
   presetStyle: TextPresetStyle;
   animation?: string;
+}
+
+export interface CustomFontItem {
+  id: string;
+  name: string;
+  fileName: string;
+  format: string;
+  uploadedAt: number;
 }
 
 export type TransitionType = 'none' | 'crossfade' | 'wipe-left' | 'zoom-in' | 'whip-pan';
@@ -282,4 +377,5 @@ export interface ProjectData {
   duration: number;
   clips: TimelineClip[];
   tracks: TrackMeta[];
+  settings: ProjectSettings;
 }

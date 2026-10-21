@@ -7,10 +7,12 @@ import {
   Image as ImageIcon,
   Sparkles,
   ArrowRight,
+  Settings,
 } from 'lucide-react';
 import { useProject } from '../context/ProjectContext';
-import { AspectRatio, TimelineClip } from '../types/editor';
-import { DEFAULT_COLOR_GRADING } from '../utils/presets';
+import { AspectRatio, TimelineClip, ProjectSettings } from '../types/editor';
+import { DEFAULT_COLOR_GRADING, createDefaultProjectSettings } from '../utils/presets';
+import { ProjectSettingsModal } from '../components/ProjectSettingsModal';
 
 interface MockMediaAsset {
   id: string;
@@ -59,9 +61,13 @@ const STOCK_CANVASES: MockMediaAsset[] = [
 ];
 
 export const MediaPickerModal: React.FC = () => {
-  const { setCurrentScreen, createNewProject } = useProject();
+  const { setCurrentScreen, createNewProjectWithSettings } = useProject();
   const [activeTab, setActiveTab] = useState<'videos' | 'photos' | 'stock'>('stock');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
+  const [projectSettings, setProjectSettings] = useState<ProjectSettings>(() =>
+    createDefaultProjectSettings(undefined, 'New ClipCraft Video', '9:16')
+  );
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(['stock-1', 'stock-2']);
   const [userUploadedAssets, setUserUploadedAssets] = useState<MockMediaAsset[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -145,7 +151,14 @@ export const MediaPickerModal: React.FC = () => {
       };
     });
 
-    createNewProject(`Project ${new Date().toLocaleDateString()}`, aspectRatio, initialClips);
+    createNewProjectWithSettings(
+      {
+        ...projectSettings,
+        aspectRatio,
+        name: projectSettings.name || `Project ${new Date().toLocaleDateString()}`,
+      },
+      initialClips
+    );
   };
 
   const currentList =
@@ -175,36 +188,52 @@ export const MediaPickerModal: React.FC = () => {
           </div>
           <button
             onClick={() => setCurrentScreen('DASHBOARD_SCREEN')}
-            className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-slate-300"
+            className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-slate-300 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Aspect Ratio Selector */}
-        <div className="px-4 py-2.5 bg-black/30 border-b border-white/[0.06] flex items-center justify-between">
-          <span className="text-xs font-semibold text-slate-400">Aspect Ratio:</span>
-          <div className="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-xl border border-white/[0.06]">
-            {(
-              [
-                { id: '9:16', label: '9:16 (Shorts)' },
-                { id: '16:9', label: '16:9 (YouTube)' },
-                { id: '1:1', label: '1:1 (Square)' },
-              ] as { id: AspectRatio; label: string }[]
-            ).map((r) => (
-              <button
-                key={r.id}
-                onClick={() => setAspectRatio(r.id)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                  aspectRatio === r.id
-                    ? 'bg-amber-500 text-slate-950 font-bold shadow'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
+        {/* Aspect Ratio & Settings Selector */}
+        <div className="px-4 py-2.5 bg-black/30 border-b border-white/[0.06] flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-400">Ratio:</span>
+            <div className="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-xl border border-white/[0.06]">
+              {(
+                [
+                  { id: '9:16', label: '9:16' },
+                  { id: '16:9', label: '16:9' },
+                  { id: '1:1', label: '1:1' },
+                  { id: '4:5', label: '4:5' },
+                ] as { id: AspectRatio; label: string }[]
+              ).map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => {
+                    setAspectRatio(r.id);
+                    setProjectSettings((prev) => ({ ...prev, aspectRatio: r.id }));
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    aspectRatio === r.id
+                      ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
           </div>
+
+          {/* Project Settings Trigger */}
+          <button
+            onClick={() => setIsSettingsModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/25 text-xs font-semibold active:scale-95 transition-all cursor-pointer"
+            title="Configure Project Settings (Canvas, FPS, Resolution)"
+          >
+            <Settings className="w-3.5 h-3.5 text-amber-400" />
+            <span>Settings ({projectSettings.resolutionTier}, {projectSettings.frameRate}fps)</span>
+          </button>
         </div>
 
         {/* Media Tabs */}
@@ -320,6 +349,17 @@ export const MediaPickerModal: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Project Configuration Modal */}
+      <ProjectSettingsModal
+        isOpen={isSettingsModalOpen}
+        initialSettings={projectSettings}
+        onClose={() => setIsSettingsModalOpen(false)}
+        onSave={(s) => {
+          setProjectSettings(s);
+          setAspectRatio(s.aspectRatio);
+        }}
+      />
     </div>
   );
 };

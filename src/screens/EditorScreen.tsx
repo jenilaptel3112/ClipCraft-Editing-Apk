@@ -4,6 +4,7 @@ import {
   Redo2,
   Download,
   ArrowLeft,
+  Settings,
 } from 'lucide-react';
 import {
   AspectRatio,
@@ -19,11 +20,13 @@ import {
   BrushType,
   DrawingStroke,
   Keyframe,
+  ProjectSettings,
 } from '../types/editor';
 import {
   INITIAL_CLIPS,
   INITIAL_TRACKS,
   DEFAULT_COLOR_GRADING,
+  createDefaultProjectSettings,
 } from '../utils/presets';
 import { useTimelinePlayback } from '../hooks/useTimelinePlayback';
 import { OptimizedPreviewPlayer } from '../components/OptimizedPreviewPlayer';
@@ -38,6 +41,7 @@ import { FormatDrawer, AudioDrawer, EffectsDrawer } from '../components/QuickDra
 import { ProExportSettingsDrawer } from '../components/ProExportSettingsDrawer';
 import { Transform3DDrawer } from '../components/Transform3DDrawer';
 import { VectorDrawingDrawer } from '../components/VectorDrawingDrawer';
+import { ProjectSettingsModal } from '../components/ProjectSettingsModal';
 import { useProject } from '../context/ProjectContext';
 
 interface HistorySnapshot {
@@ -50,7 +54,25 @@ interface EditorScreenProps {
 }
 
 export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) => {
-  const { activeProject, updateActiveProject, setCurrentScreen } = useProject();
+  const {
+    activeProject,
+    updateActiveProject,
+    updateActiveProjectSettings,
+    setCurrentScreen,
+  } = useProject();
+
+  const [projectSettings, setProjectSettings] = useState<ProjectSettings>(() => {
+    return (
+      activeProject?.settings ||
+      createDefaultProjectSettings(
+        activeProject?.id,
+        activeProject?.title,
+        activeProject?.aspectRatio || '9:16'
+      )
+    );
+  });
+
+  const [isProjectSettingsOpen, setIsProjectSettingsOpen] = useState<boolean>(false);
 
   // Viewport & Aspect Ratio State from active project
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(
@@ -58,6 +80,23 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
   );
   const [fitMode, setFitMode] = useState<FitMode>(
     activeProject?.fitMode || 'cover'
+  );
+
+  // Sync when activeProject settings updates
+  useEffect(() => {
+    if (activeProject?.settings) {
+      setProjectSettings(activeProject.settings);
+      setAspectRatio(activeProject.settings.aspectRatio);
+    }
+  }, [activeProject?.settings]);
+
+  const handleSaveProjectSettings = useCallback(
+    (newSettings: ProjectSettings) => {
+      setProjectSettings(newSettings);
+      setAspectRatio(newSettings.aspectRatio);
+      updateActiveProjectSettings(newSettings);
+    },
+    [updateActiveProjectSettings]
   );
 
   // Timeline Clips & Track Metadata
@@ -678,26 +717,45 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
         className="hidden"
       />
 
-      {/* TOP BAR: Back arrow to Dashboard, Project Title, and Prominent Export Button */}
+      {/* TOP BAR: Back arrow to Dashboard, Project Title, Settings Button, Aspect Ratio and Export */}
       <header className="flex items-center justify-between px-3 py-2 bg-[#0F1118] border-b border-white/[0.08] shrink-0 z-20">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
           <button
             onClick={() => setCurrentScreen('DASHBOARD_SCREEN')}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white bg-white/[0.04] active:scale-95 transition-all"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white bg-white/[0.04] active:scale-95 transition-all shrink-0 cursor-pointer"
             title="Save & Exit to Dashboard"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
 
-          <span className="font-display font-bold text-sm text-white truncate max-w-[130px] sm:max-w-[180px] ml-1">
-            {activeProject?.title || 'ClipCraft'}
-          </span>
+          {/* Project Title Button: Opens Project Settings Modal */}
+          <button
+            onClick={() => setIsProjectSettingsOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/[0.06] active:scale-95 transition-all text-left cursor-pointer min-w-0"
+            title="Configure Project Settings"
+          >
+            <span className="font-display font-bold text-sm text-white truncate max-w-[100px] sm:max-w-[150px]">
+              {projectSettings.name || activeProject?.title || 'ClipCraft'}
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[10px] font-mono-tabular font-extrabold text-amber-400 shrink-0">
+              {projectSettings.aspectRatio}
+            </span>
+          </button>
 
-          <div className="flex items-center gap-0.5 ml-2">
+          {/* Project Settings Gear Button */}
+          <button
+            onClick={() => setIsProjectSettingsOpen(true)}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 active:scale-95 transition-all shrink-0 cursor-pointer border border-amber-500/20"
+            title="Project Settings (Canvas, FPS, Audio)"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+
+          <div className="flex items-center gap-0.5 ml-1">
             <button
               onClick={handleUndo}
               disabled={history.length === 0}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white disabled:opacity-30 active:scale-95 transition-all"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white disabled:opacity-30 active:scale-95 transition-all shrink-0 cursor-pointer"
               title="Undo"
             >
               <Undo2 className="w-4 h-4" />
@@ -705,7 +763,7 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
             <button
               onClick={handleRedo}
               disabled={redoStack.length === 0}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white disabled:opacity-30 active:scale-95 transition-all"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white disabled:opacity-30 active:scale-95 transition-all shrink-0 cursor-pointer"
               title="Redo"
             >
               <Redo2 className="w-4 h-4" />
@@ -713,31 +771,36 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
           </div>
         </div>
 
-        {/* Aspect Ratio Pill Switcher */}
-        <div className="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-xl border border-white/[0.06]">
-          {(['9:16', '16:9', '1:1'] as AspectRatio[]).map((r) => (
-            <button
-              key={r}
-              onClick={() => setAspectRatio(r)}
-              className={`px-2.5 py-1 rounded-lg text-xs font-mono-tabular font-bold transition-all ${
-                aspectRatio === r
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
+        <div className="flex items-center gap-2">
+          {/* Quick Aspect Ratio Switcher */}
+          <div className="hidden xs:flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-xl border border-white/[0.06]">
+            {(['9:16', '16:9', '1:1'] as AspectRatio[]).map((r) => (
+              <button
+                key={r}
+                onClick={() => {
+                  setAspectRatio(r);
+                  handleSaveProjectSettings({ ...projectSettings, aspectRatio: r });
+                }}
+                className={`px-2 py-1 rounded-lg text-xs font-mono-tabular font-bold transition-all cursor-pointer ${
+                  aspectRatio === r
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
 
-        {/* Prominent Export Button */}
-        <button
-          onClick={handleExportClick}
-          className="min-h-[38px] px-4 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-md transition-all shrink-0 cursor-pointer"
-        >
-          <Download className="w-3.5 h-3.5" />
-          <span>Export</span>
-        </button>
+          {/* Prominent Export Button */}
+          <button
+            onClick={handleExportClick}
+            className="min-h-[38px] px-3.5 sm:px-4 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-md transition-all shrink-0 cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Export</span>
+          </button>
+        </div>
       </header>
 
       {/* Video Preview Monitor */}
@@ -752,6 +815,12 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
         tracks={tracks}
         mediaElements={mediaElementsRef.current}
         selectedClipId={selectedClipId}
+        customDimensions={projectSettings.customDimensions}
+        resolutionTier={projectSettings.resolutionTier}
+        backgroundColor={projectSettings.backgroundColor}
+        backgroundBlurFallback={projectSettings.backgroundBlurFallback}
+        timecodeDisplay={projectSettings.timecodeDisplay}
+        frameRate={projectSettings.frameRate}
         isDraftScrubbing={isDraftScrubbing}
         isDrawingMode={isDrawingMode}
         activeBrush={activeBrush}
@@ -767,13 +836,15 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
         }}
       />
 
-      {/* Multi-Track Timeline */}
+      {/* Multi-Track Timeline with Fixed-Center Playhead */}
       <TimelineView
         clips={clips}
         totalDuration={totalDuration}
         selectedClipId={selectedClipId}
         isPlaying={isPlaying}
         currentTime={currentTimeRef.current}
+        timecodeDisplay={projectSettings.timecodeDisplay}
+        frameRate={projectSettings.frameRate}
         onSelectClip={setSelectedClipId}
         onSeek={handleSeek}
         onUpdateClipTiming={handleUpdateClipTiming}
@@ -935,6 +1006,14 @@ export const EditorScreen: React.FC<EditorScreenProps> = ({ onTriggerExport }) =
         onUndoStroke={handleUndoStroke}
         onClearDrawing={handleClearDrawing}
         onUpdateTrimPaths={handleUpdateTrimPaths}
+      />
+
+      {/* Project Settings Modal: Mid-Edit Access */}
+      <ProjectSettingsModal
+        isOpen={isProjectSettingsOpen}
+        initialSettings={projectSettings}
+        onClose={() => setIsProjectSettingsOpen(false)}
+        onSave={handleSaveProjectSettings}
       />
     </div>
   );

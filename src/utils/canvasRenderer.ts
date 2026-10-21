@@ -1,6 +1,7 @@
 import { TimelineClip, TrackMeta, SyntheticSceneType, FitMode } from '../types/editor';
 import { getInterpolatedTransform } from './presets';
 import { renderVectorDrawing } from './vectorDrawingRenderer';
+import { buildCompoundCssFilter, applyCompoundOverlaysAndMotion } from './customFxEngine';
 
 // Build CSS filter string from clip's ColorGrading
 export function buildCssFilter(clip: TimelineClip, isDraft: boolean = false): string {
@@ -13,7 +14,21 @@ export function buildCssFilter(clip: TimelineClip, isDraft: boolean = false): st
   const hue = cg.warmth < 0 ? Math.round(cg.warmth * 0.45) : 0;
   const blur = !isDraft && cg.blur > 0 ? `blur(${cg.blur * 0.5}px)` : '';
 
-  return `brightness(${b}%) contrast(${c}%) saturate(${s}%) sepia(${sepia}%) hue-rotate(${hue}deg) ${blur}`.trim();
+  let baseFilter = `brightness(${b}%) contrast(${c}%) saturate(${s}%) sepia(${sepia}%) hue-rotate(${hue}deg) ${blur}`.trim();
+
+  // Incorporate custom compound effect base filter nodes if present
+  if (clip.activeEffects) {
+    for (const eff of clip.activeEffects) {
+      if (eff.type === 'custom-compound' && eff.customPreset) {
+        const compoundStr = buildCompoundCssFilter(eff.customPreset.nodes, eff.intensity ?? eff.customPreset.masterIntensity);
+        if (compoundStr && compoundStr !== 'none') {
+          baseFilter = `${baseFilter} ${compoundStr}`.trim();
+        }
+      }
+    }
+  }
+
+  return baseFilter;
 }
 
 // Draw procedural synthetic background scenes
@@ -272,7 +287,24 @@ export function applyCapCutVideoEffects(
         rad.addColorStop(1, `rgba(0,0,0,${0.7 * intensityNorm})`);
         ctx.fillStyle = rad;
         ctx.fillRect(0, 0, w, h);
-        ctx.restore();
+        break;
+      }
+
+      case 'custom-compound': {
+        if (eff.customPreset) {
+          const compoundMotion = applyCompoundOverlaysAndMotion(
+            ctx,
+            eff.customPreset.nodes,
+            eff.intensity ?? eff.customPreset.masterIntensity,
+            localTime,
+            w,
+            h,
+            isDraft
+          );
+          extraOffsetX += compoundMotion.extraOffsetX;
+          extraOffsetY += compoundMotion.extraOffsetY;
+          extraScale *= compoundMotion.extraScale;
+        }
         break;
       }
     }
@@ -281,7 +313,205 @@ export function applyCapCutVideoEffects(
   return { extraOffsetX, extraOffsetY, extraScale };
 }
 
-// Kinetic Text Engine with In/Out/Loop animations & Viral Presets (Karaoke, Bouncy)
+// Offscreen Text Rasterization Cache Record
+interface CachedTextCanvas {
+  canvas: HTMLCanvasElement;
+  originX: number;
+  originY: number;
+  width: number;
+  height: number;
+}
+
+const textRasterCache = new Map<string, CachedTextCanvas>();
+
+// Helper to pre-render styled text onto an isolated OffscreenCanvas
+function getOrRasterizeText(
+  ts: NonNullable<TimelineClip['textStyle']>,
+  textToRender: string,
+  responsiveFontSize: number
+): CachedTextCanvas {
+  const cacheKey = [
+    textToRender,
+    ts.fontFamily,
+    responsiveFontSize,
+    ts.fontWeight,
+    ts.color,
+    ts.opacity ?? 1,
+    ts.gradientEnabled,
+    ts.gradientStart,
+    ts.gradientEnd,
+    ts.gradientDirection,
+    ts.bgEnabled,
+    ts.bgShape,
+    ts.bgColor,
+    ts.bgOpacity ?? 1,
+    ts.bgRadius,
+    ts.bgPaddingX ?? ts.bgPadding ?? 12,
+    ts.bgPaddingY ?? ts.bgPadding ?? 8,
+    ts.letterSpacing ?? 0,
+    ts.lineHeight ?? 1.25,
+    ts.textAlign ?? 'center',
+    ts.strokeColor,
+    ts.strokeWidth,
+    ts.shadowBlur,
+    ts.shadowDistance,
+    ts.shadowOffsetX ?? 0,
+    ts.shadowOffsetY ?? 3,
+    ts.shadowColor,
+    ts.glowMode ? 1 : 0,
+  ].join('__');
+
+  const existing = textRasterCache.get(cacheKey);
+  if (existing) return existing;
+
+  // Evict oldest entries if cache exceeds 80 items
+  if (textRasterCache.size > 80) {
+    const firstKey = textRasterCache.keys().next().value;
+    if (firstKey) textRasterCache.delete(firstKey);
+  }
+
+  const lines = textToRender.split('\n');
+  const lineSpacing = responsiveFontSize * (ts.lineHeight || 1.25);
+  const textTotalH = Math.max(responsiveFontSize, lines.length * lineSpacing);
+
+  // Measure text with a dummy probe context
+  const probeCanvas = document.createElement('canvas');
+  const probeCtx = probeCanvas.getContext('2d')!;
+  probeCtx.font = `${ts.fontWeight} ${responsiveFontSize}px "${ts.fontFamily}", sans-serif`;
+  if ('letterSpacing' in probeCtx && ts.letterSpacing !== undefined) {
+    (probeCtx as any).letterSpacing = `${ts.letterSpacing}px`;
+  }
+
+  let maxLineWidth = 0;
+  for (const line of lines) {
+    const m = probeCtx.measureText(line || ' ');
+    if (m.width > maxLineWidth) maxLineWidth = m.width;
+  }
+
+  const padX = ts.bgPaddingX ?? ts.bgPadding ?? 14;
+  const padY = ts.bgPaddingY ?? ts.bgPadding ?? 8;
+  const shadowGutter = Math.max(30, (ts.shadowBlur || 0) * 2 + 20);
+
+  const canvasW = Math.ceil(maxLineWidth + padX * 2 + shadowGutter * 2);
+  const canvasH = Math.ceil(textTotalH + padY * 2 + shadowGutter * 2);
+
+  const offCanvas = document.createElement('canvas');
+  offCanvas.width = canvasW;
+  offCanvas.height = canvasH;
+  const offCtx = offCanvas.getContext('2d')!;
+
+  offCtx.save();
+  offCtx.translate(canvasW / 2, canvasH / 2);
+
+  // 1. Background Pill Box or Shape
+  if (ts.bgEnabled && ts.bgShape !== 'none') {
+    const bgW = maxLineWidth + padX * 2;
+    const bgH = textTotalH + padY * 2;
+    const bgX = -bgW / 2;
+    const bgY = -bgH / 2;
+    const bgOpacity = ts.bgOpacity ?? 1;
+
+    offCtx.save();
+    offCtx.globalAlpha = bgOpacity;
+    offCtx.fillStyle = ts.bgColor || '#F59E0B';
+
+    if (ts.bgShape === 'sharp-box') {
+      offCtx.fillRect(bgX, bgY, bgW, bgH);
+    } else if (ts.bgShape === 'underline-highlight') {
+      const underlineH = Math.max(6, responsiveFontSize * 0.28);
+      const underlineY = textTotalH / 2 - underlineH * 0.4;
+      offCtx.fillRect(-maxLineWidth / 2 - 4, underlineY, maxLineWidth + 8, underlineH);
+    } else {
+      // rounded-pill or default
+      const maxRadius = Math.min(bgW, bgH) / 2;
+      const cornerRadius = ts.bgShape === 'rounded-pill' ? maxRadius : (ts.bgRadius ?? 8);
+      offCtx.beginPath();
+      offCtx.roundRect(bgX, bgY, bgW, bgH, cornerRadius);
+      offCtx.fill();
+    }
+    offCtx.restore();
+  }
+
+  // 2. Setup Font, Alignment & Letter Spacing
+  offCtx.font = `${ts.fontWeight} ${responsiveFontSize}px "${ts.fontFamily}", sans-serif`;
+  offCtx.textAlign = 'center';
+  offCtx.textBaseline = 'middle';
+  if ('letterSpacing' in offCtx && ts.letterSpacing !== undefined) {
+    (offCtx as any).letterSpacing = `${ts.letterSpacing}px`;
+  }
+
+  // 3. Drop Shadow & Glow Mode
+  if (ts.glowMode) {
+    offCtx.save();
+    offCtx.shadowColor = ts.shadowColor || ts.color || '#F59E0B';
+    offCtx.shadowBlur = Math.max(22, (ts.shadowBlur || 15) * 1.5);
+    offCtx.shadowOffsetX = 0;
+    offCtx.shadowOffsetY = 0;
+  } else if (ts.shadowBlur > 0) {
+    offCtx.shadowColor = ts.shadowColor || 'rgba(0, 0, 0, 0.85)';
+    offCtx.shadowBlur = ts.shadowBlur;
+    offCtx.shadowOffsetX = ts.shadowOffsetX ?? 0;
+    offCtx.shadowOffsetY = ts.shadowOffsetY ?? ts.shadowDistance ?? 3;
+  }
+
+  // 4. Stroke / Outline
+  if (ts.strokeWidth > 0) {
+    offCtx.strokeStyle = ts.strokeColor || '#000000';
+    offCtx.lineWidth = ts.strokeWidth * 2;
+    offCtx.lineJoin = 'round';
+
+    lines.forEach((line, idx) => {
+      const lineY = -textTotalH / 2 + (idx + 0.5) * lineSpacing;
+      offCtx.strokeText(line, 0, lineY);
+    });
+  }
+
+  // 5. Fill Color or Linear Gradient Fill
+  if (ts.gradientEnabled && ts.gradientStart && ts.gradientEnd) {
+    let grad: CanvasGradient;
+    if (ts.gradientDirection === '180deg') {
+      grad = offCtx.createLinearGradient(0, -textTotalH / 2, 0, textTotalH / 2);
+    } else if (ts.gradientDirection === '45deg') {
+      grad = offCtx.createLinearGradient(-maxLineWidth / 2, -textTotalH / 2, maxLineWidth / 2, textTotalH / 2);
+    } else {
+      // 90deg default (horizontal)
+      grad = offCtx.createLinearGradient(-maxLineWidth / 2, 0, maxLineWidth / 2, 0);
+    }
+    grad.addColorStop(0, ts.gradientStart);
+    grad.addColorStop(1, ts.gradientEnd);
+    offCtx.fillStyle = grad;
+  } else {
+    offCtx.fillStyle = ts.color || '#FFFFFF';
+  }
+
+  if (ts.opacity !== undefined) {
+    offCtx.globalAlpha = Math.max(0, Math.min(1, ts.opacity));
+  }
+
+  lines.forEach((line, idx) => {
+    const lineY = -textTotalH / 2 + (idx + 0.5) * lineSpacing;
+    offCtx.fillText(line, 0, lineY);
+  });
+
+  if (ts.glowMode) {
+    offCtx.restore();
+  }
+
+  offCtx.restore();
+
+  const record: CachedTextCanvas = {
+    canvas: offCanvas,
+    originX: canvasW / 2,
+    originY: canvasH / 2,
+    width: canvasW,
+    height: canvasH,
+  };
+
+  textRasterCache.set(cacheKey, record);
+  return record;
+}
+
+// Kinetic Text Engine with In/Out/Loop animations, Pro Typography Suite & Offscreen Caching
 function drawCapCutTextClip(
   ctx: CanvasRenderingContext2D,
   clip: TimelineClip,
@@ -295,92 +525,114 @@ function drawCapCutTextClip(
   const remainingTime = Math.max(0, clip.duration - localTime);
 
   let extraScale = 1;
+  let extraXOffset = 0;
   let extraYOffset = 0;
   let animAlpha = 1;
 
-  // 1. IN ANIMATIONS (First 0.45s)
-  const inDuration = 0.45;
+  const inDuration = ts.inDuration || 0.45;
+  const outDuration = ts.outDuration || 0.4;
+
+  // 1. IN ANIMATIONS (Entrance)
   if (localTime < inDuration) {
-    const p = localTime / inDuration;
+    const p = Math.max(0, Math.min(1, localTime / inDuration));
     switch (ts.inAnimation) {
-      case 'pop-bounce': {
-        // Bouncy spring curve
-        extraScale = p < 0.6 ? (p / 0.6) * 1.2 : 1.2 - ((p - 0.6) / 0.4) * 0.2;
+      case 'pop-bounce':
+      case 'spring-pop': {
+        // Elastic scale bounce: 0% -> 115% -> 100%
+        if (p < 0.65) {
+          extraScale = (p / 0.65) * 1.15;
+        } else {
+          extraScale = 1.15 - ((p - 0.65) / 0.35) * 0.15;
+        }
+        animAlpha = Math.min(1, p * 1.5);
         break;
       }
-      case 'slide-up': {
-        extraYOffset = (1 - p) * 45;
-        animAlpha = p;
+      case 'slide-up':
+      case 'slide-blur': {
+        extraYOffset = (1 - p) * 55;
+        animAlpha = Math.min(1, p * 1.25);
         break;
       }
       case 'fade': {
-        animAlpha = p;
+        animAlpha = p * p;
         break;
       }
       case 'typewriter': {
-        // Handled below character-by-character
+        // Handled below via dynamic character slicing
         break;
       }
     }
   }
 
-  // 2. OUT ANIMATIONS (Last 0.4s)
-  const outDuration = 0.4;
+  // 2. OUT ANIMATIONS (Exit)
   if (remainingTime < outDuration && ts.outAnimation !== 'none') {
-    const p = remainingTime / outDuration; // 1 -> 0
+    const p = Math.max(0, Math.min(1, remainingTime / outDuration)); // 1 -> 0
     switch (ts.outAnimation) {
       case 'slide-down': {
-        extraYOffset = (1 - p) * 45;
+        extraYOffset = (1 - p) * 55;
         animAlpha = p;
         break;
       }
       case 'zoom-out': {
-        extraScale = Math.max(0.1, p);
+        extraScale = Math.max(0.05, p);
         animAlpha = p;
         break;
       }
+      case 'glitch-wipe':
       case 'glitch-dissolve': {
-        animAlpha = Math.random() > 0.3 ? p : 0;
+        animAlpha = Math.random() > 0.25 ? p : 0;
+        extraXOffset = (Math.random() - 0.5) * 12;
         extraYOffset = (Math.random() - 0.5) * 8;
+        break;
+      }
+      case 'shrink-drop': {
+        extraScale = Math.max(0.1, p * 0.9);
+        extraYOffset = (1 - p) * 65;
+        animAlpha = p;
         break;
       }
     }
   }
 
-  // 3. LOOP ANIMATIONS (During active body)
+  // 3. LOOP ANIMATIONS (Continuous)
   if (localTime >= inDuration && remainingTime >= outDuration) {
     switch (ts.loopAnimation) {
-      case 'heartbeat': {
+      case 'heartbeat':
+      case 'pulse': {
         const beat = Math.sin(localTime * 6);
-        extraScale = 1.0 + (beat > 0.4 ? 0.08 * beat : 0);
+        extraScale = 1.0 + (beat > 0.35 ? 0.08 * beat : 0);
         break;
       }
       case 'float': {
-        extraYOffset = Math.sin(localTime * 3.5) * 6;
+        extraYOffset = Math.sin(localTime * 3.5) * 7;
+        break;
+      }
+      case 'breathing': {
+        extraScale = 1.0 + Math.sin(localTime * 2.2) * 0.04;
         break;
       }
       case 'neon-flicker': {
         if (Math.sin(localTime * 14) > 0.85) {
-          animAlpha = 0.6;
+          animAlpha = 0.55;
         }
+        break;
+      }
+      case 'karaoke-wave': {
+        extraYOffset = Math.sin(localTime * 4.8) * 6;
         break;
       }
     }
   }
 
   ctx.save();
+  ctx.translate(extraXOffset, extraYOffset);
   ctx.scale(extraScale, extraScale);
-  ctx.translate(0, extraYOffset);
-  ctx.globalAlpha *= animAlpha;
+  ctx.globalAlpha = Math.max(0, Math.min(1, ctx.globalAlpha * animAlpha));
 
   const responsiveFontSize = Math.round(ts.fontSize * (Math.min(w, h) / 540));
-  ctx.font = `${ts.fontWeight} ${responsiveFontSize}px "${ts.fontFamily}", sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
 
-  // 4. VIRAL SUBTITLE / CAPTION PRESETS
+  // 4. VIRAL SUBTITLE / KARAOKE ACTIVE WORD-BY-WORD HIGHLIGHT
   if (ts.presetStyle === 'karaoke-active') {
-    // Word-by-word karaoke highlight style
     const words = ts.content.split(' ');
     const totalWords = Math.max(1, words.length);
     const activeWordIndex = Math.min(
@@ -388,7 +640,10 @@ function drawCapCutTextClip(
       Math.floor((localTime / clip.duration) * totalWords)
     );
 
-    // Measure total line
+    ctx.font = `${ts.fontWeight} ${responsiveFontSize}px "${ts.fontFamily}", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
     const fullTextMetrics = ctx.measureText(ts.content);
     let currentX = -fullTextMetrics.width / 2;
 
@@ -399,13 +654,13 @@ function drawCapCutTextClip(
       ctx.save();
       if (isWordActive) {
         ctx.scale(1.12, 1.12);
-        ctx.fillStyle = '#F59E0B'; // Highlight active word in golden amber
+        ctx.fillStyle = '#F59E0B'; // Vibrant highlight
       } else {
-        ctx.fillStyle = ts.color;
+        ctx.fillStyle = ts.color || '#FFFFFF';
       }
 
       if (ts.strokeWidth > 0) {
-        ctx.strokeStyle = ts.strokeColor;
+        ctx.strokeStyle = ts.strokeColor || '#000000';
         ctx.lineWidth = ts.strokeWidth * 2;
         ctx.lineJoin = 'round';
         ctx.strokeText(word, currentX + wordMetrics.width / 2, 0);
@@ -421,50 +676,19 @@ function drawCapCutTextClip(
     return;
   }
 
-  // Handle standard or typewriter text
+  // 5. Standard Text or Typewriter reveal
   let displayText = ts.content;
   if (ts.inAnimation === 'typewriter') {
-    const typeSpan = Math.min(1.5, clip.duration * 0.7);
+    const typeSpan = Math.min(inDuration * 1.5, clip.duration * 0.7);
     const charRatio = Math.min(1, localTime / Math.max(0.2, typeSpan));
     const charCount = Math.ceil(ts.content.length * charRatio);
-    displayText = ts.content.slice(0, charCount);
+    displayText = ts.content.slice(0, Math.max(1, charCount));
   }
 
-  const metrics = ctx.measureText(displayText || ' ');
-  const textWidth = metrics.width;
-  const textHeight = responsiveFontSize * 1.25;
+  // Fast pre-rasterized hardware-accelerated OffscreenCanvas draw
+  const cached = getOrRasterizeText(ts, displayText || ' ', responsiveFontSize);
+  ctx.drawImage(cached.canvas, -cached.originX, -cached.originY);
 
-  // Background Pill Box with adjustable radius and padding
-  if (ts.bgEnabled) {
-    const pad = ts.bgPadding || 10;
-    const radius = ts.bgRadius || 8;
-    ctx.fillStyle = ts.bgColor;
-    const rx = -textWidth / 2 - pad;
-    const ry = -textHeight / 2 - pad / 2;
-    const rw = textWidth + pad * 2;
-    const rh = textHeight + pad;
-    ctx.beginPath();
-    ctx.roundRect(rx, ry, rw, rh, radius);
-    ctx.fill();
-  }
-
-  // Drop Shadow
-  if (ts.shadowBlur > 0) {
-    ctx.shadowColor = ts.shadowColor || 'rgba(0, 0, 0, 0.8)';
-    ctx.shadowBlur = ts.shadowBlur;
-    ctx.shadowOffsetY = ts.shadowDistance || 3;
-  }
-
-  // Border / Stroke
-  if (ts.strokeWidth > 0) {
-    ctx.strokeStyle = ts.strokeColor;
-    ctx.lineWidth = ts.strokeWidth * 2;
-    ctx.lineJoin = 'round';
-    ctx.strokeText(displayText, 0, 0);
-  }
-
-  ctx.fillStyle = ts.color;
-  ctx.fillText(displayText, 0, 0);
   ctx.restore();
 }
 
@@ -501,7 +725,9 @@ export function renderCompositeFrame(
   fitMode: FitMode,
   selectedClipId: string | null,
   showSafeGuides: boolean = false,
-  isDraftScrubbing: boolean = false
+  isDraftScrubbing: boolean = false,
+  backgroundColor: string = '#07080C',
+  backgroundBlurFallback: boolean = false
 ) {
   const renderScale = isDraftScrubbing ? 0.5 : 1;
   const rw = Math.round(canvasWidth * renderScale);
@@ -512,8 +738,41 @@ export function renderCompositeFrame(
 
   ctx.save();
   ctx.clearRect(0, 0, rw, rh);
-  ctx.fillStyle = '#07080C';
+  ctx.fillStyle = backgroundColor || '#07080C';
   ctx.fillRect(0, 0, rw, rh);
+
+  // Smart Ambient Blur Fallback for Letterboxing/Pillarboxing (CapCut Style)
+  if (backgroundBlurFallback) {
+    const primaryActiveClip = clips.find(
+      (c) =>
+        c.trackId === 'video' &&
+        playheadTime >= c.startTime &&
+        playheadTime < c.startTime + c.duration
+    );
+    if (primaryActiveClip) {
+      const mediaEl = mediaElements.get(primaryActiveClip.id);
+      if (mediaEl) {
+        ctx.save();
+        ctx.filter = isDraftScrubbing ? 'blur(10px) brightness(0.6)' : 'blur(24px) brightness(0.6)';
+        let srcW = rw;
+        let srcH = rh;
+        if (mediaEl instanceof HTMLVideoElement) {
+          srcW = mediaEl.videoWidth || rw;
+          srcH = mediaEl.videoHeight || rh;
+        } else if (mediaEl instanceof HTMLImageElement) {
+          srcW = mediaEl.naturalWidth || rw;
+          srcH = mediaEl.naturalHeight || rh;
+        }
+        const scaleCover = Math.max(rw / srcW, rh / srcH) * 1.15;
+        const drawW = srcW * scaleCover;
+        const drawH = srcH * scaleCover;
+        const dx = (rw - drawW) / 2;
+        const dy = (rh - drawH) / 2;
+        ctx.drawImage(mediaEl, dx, dy, drawW, drawH);
+        ctx.restore();
+      }
+    }
+  }
 
   const layerOrder: ('video' | 'overlay' | 'text')[] = ['video', 'overlay', 'text'];
 

@@ -73,7 +73,49 @@ export function getExportResolutionDimensions(
           return { width: 720, height: 900 };
       }
       break;
+
+    case '21:9':
+      switch (resolution) {
+        case '4K':
+          return { width: 5120, height: 2160 };
+        case '2K':
+          return { width: 3440, height: 1440 };
+        case '1080p':
+          return { width: 2560, height: 1080 };
+        case '720p':
+          return { width: 1680, height: 720 };
+      }
+      break;
+
+    case '4:3':
+      switch (resolution) {
+        case '4K':
+          return { width: 2880, height: 2160 };
+        case '2K':
+          return { width: 1920, height: 1440 };
+        case '1080p':
+          return { width: 1440, height: 1080 };
+        case '720p':
+          return { width: 960, height: 720 };
+      }
+      break;
+
+    case 'custom':
+    default:
+      switch (resolution) {
+        case '4K':
+          return { width: 2160, height: 3840 };
+        case '2K':
+          return { width: 1440, height: 2560 };
+        case '1080p':
+          return { width: 1080, height: 1920 };
+        case '720p':
+        default:
+          return { width: 720, height: 1280 };
+      }
   }
+
+  return { width: 1080, height: 1920 };
 }
 
 /**

@@ -1,4 +1,16 @@
-import { TimelineClip, TrackMeta, ColorGrading, EasingType, Keyframe, TextStyle } from '../types/editor';
+import {
+  TimelineClip,
+  TrackMeta,
+  ColorGrading,
+  EasingType,
+  Keyframe,
+  TextStyle,
+  ProjectSettings,
+  AspectRatio,
+  ResolutionTier,
+  TimecodeDisplayMode,
+  ProjectFrameRate,
+} from '../types/editor';
 
 export const DEFAULT_COLOR_GRADING: ColorGrading = {
   brightness: 100,
@@ -465,3 +477,85 @@ export function formatTimestamp(seconds: number): string {
   const ms = Math.floor((safe % 1) * 100);
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
 }
+
+export function formatTimecode(
+  seconds: number,
+  mode: TimecodeDisplayMode = 'compact',
+  fps: ProjectFrameRate = 30
+): string {
+  const safe = Math.max(0, seconds);
+
+  if (mode === 'frames') {
+    const totalFrames = Math.floor(safe * fps);
+    return `F ${totalFrames}`;
+  }
+
+  if (mode === 'hmsf') {
+    const hrs = Math.floor(safe / 3600);
+    const mins = Math.floor((safe % 3600) / 60);
+    const secs = Math.floor(safe % 60);
+    const frames = Math.floor((safe % 1) * fps);
+    return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}:${String(frames).padStart(2, '0')}`;
+  }
+
+  // default 'compact'
+  return formatTimestamp(safe);
+}
+
+export function createDefaultProjectSettings(
+  id: string = `proj-${Date.now()}`,
+  name: string = 'Untitled Video',
+  aspectRatio: AspectRatio = '9:16'
+): ProjectSettings {
+  return {
+    id,
+    name,
+    createdAt: Date.now(),
+    lastModified: Date.now(),
+    aspectRatio,
+    resolutionTier: '1080p',
+    frameRate: 30,
+    sampleRate: 48000,
+    backgroundColor: '#000000',
+    backgroundBlurFallback: true,
+    timecodeDisplay: 'compact',
+  };
+}
+
+export function calculateDimensionsForTier(
+  aspectRatio: AspectRatio,
+  tier: ResolutionTier = '1080p',
+  customDims?: { width: number; height: number }
+): { width: number; height: number } {
+  if (aspectRatio === 'custom' && customDims) {
+    return customDims;
+  }
+
+  const baseDimension: Record<ResolutionTier, number> = {
+    '720p': 720,
+    '1080p': 1080,
+    '1440p': 1440,
+    '4k': 2160,
+  };
+
+  const base = baseDimension[tier] || 1080;
+
+  switch (aspectRatio) {
+    case '9:16':
+      return { width: base, height: Math.round((base * 16) / 9) };
+    case '16:9':
+      return { width: Math.round((base * 16) / 9), height: base };
+    case '1:1':
+      return { width: base, height: base };
+    case '4:5':
+      return { width: base, height: Math.round((base * 5) / 4) };
+    case '21:9':
+      return { width: Math.round((base * 21) / 9), height: base };
+    case '4:3':
+      return { width: Math.round((base * 4) / 3), height: base };
+    case 'custom':
+    default:
+      return customDims || { width: base, height: Math.round((base * 16) / 9) };
+  }
+}
+

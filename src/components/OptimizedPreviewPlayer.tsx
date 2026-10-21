@@ -1,7 +1,18 @@
 import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import { Play, Pause, Compass, Box, PenTool } from 'lucide-react';
-import { AspectRatio, FitMode, TimelineClip, TrackMeta, BrushType, DrawingStroke, DrawingPoint } from '../types/editor';
-import { formatTimestamp } from '../utils/presets';
+import {
+  AspectRatio,
+  FitMode,
+  TimelineClip,
+  TrackMeta,
+  BrushType,
+  DrawingStroke,
+  DrawingPoint,
+  ResolutionTier,
+  ProjectFrameRate,
+  TimecodeDisplayMode,
+} from '../types/editor';
+import { formatTimestamp, formatTimecode } from '../utils/presets';
 import { renderCompositeFrame } from '../utils/canvasRenderer';
 import { threeSceneManager } from '../utils/threeSceneManager';
 import { Viewport3DGizmo } from './Viewport3DGizmo';
@@ -17,6 +28,12 @@ interface OptimizedPreviewPlayerProps {
   tracks: TrackMeta[];
   mediaElements: Map<string, HTMLVideoElement | HTMLImageElement>;
   selectedClipId: string | null;
+  customDimensions?: { width: number; height: number };
+  resolutionTier?: ResolutionTier;
+  backgroundColor?: string;
+  backgroundBlurFallback?: boolean;
+  timecodeDisplay?: TimecodeDisplayMode;
+  frameRate?: ProjectFrameRate;
   isDraftScrubbing?: boolean;
   isDrawingMode?: boolean;
   activeBrush?: BrushType;
@@ -42,6 +59,12 @@ export const OptimizedPreviewPlayer: React.FC<OptimizedPreviewPlayerProps> = mem
     tracks,
     mediaElements,
     selectedClipId,
+    customDimensions,
+    resolutionTier = '1080p',
+    backgroundColor = '#000000',
+    backgroundBlurFallback = true,
+    timecodeDisplay = 'compact',
+    frameRate = 30,
     isDraftScrubbing = false,
     isDrawingMode = false,
     activeBrush = 'pen',
@@ -75,6 +98,15 @@ export const OptimizedPreviewPlayer: React.FC<OptimizedPreviewPlayerProps> = mem
     } | null>(null);
 
     const getCanvasDimensions = useCallback((): { width: number; height: number } => {
+      if (aspectRatio === 'custom' && customDimensions) {
+        const ratio = customDimensions.width / Math.max(1, customDimensions.height);
+        if (ratio >= 1) {
+          return { width: 960, height: Math.round(960 / ratio) };
+        } else {
+          return { width: Math.round(960 * ratio), height: 960 };
+        }
+      }
+
       switch (aspectRatio) {
         case '9:16':
           return { width: 540, height: 960 };
@@ -84,8 +116,14 @@ export const OptimizedPreviewPlayer: React.FC<OptimizedPreviewPlayerProps> = mem
           return { width: 720, height: 720 };
         case '4:5':
           return { width: 720, height: 900 };
+        case '21:9':
+          return { width: 960, height: 411 };
+        case '4:3':
+          return { width: 720, height: 540 };
+        default:
+          return { width: 540, height: 960 };
       }
-    }, [aspectRatio]);
+    }, [aspectRatio, customDimensions]);
 
     const { width: canvasW, height: canvasH } = getCanvasDimensions();
 
@@ -124,17 +162,19 @@ export const OptimizedPreviewPlayer: React.FC<OptimizedPreviewPlayerProps> = mem
               fitMode,
               selectedClipId,
               false,
-              isDraft
+              isDraft,
+              backgroundColor,
+              backgroundBlurFallback
             );
           }
         }
 
         // Direct DOM update for 60fps playhead timecode
         if (timecodeDisplayRef.current) {
-          timecodeDisplayRef.current.textContent = formatTimestamp(time);
+          timecodeDisplayRef.current.textContent = formatTimecode(time, timecodeDisplay, frameRate);
         }
       },
-      [canvasRef, canvasW, canvasH, clips, tracks, mediaElements, fitMode, selectedClipId]
+      [canvasRef, canvasW, canvasH, clips, tracks, mediaElements, fitMode, selectedClipId, backgroundColor, backgroundBlurFallback, timecodeDisplay, frameRate]
     );
 
     // Register callback so RAF loop or scrubber gesture can trigger raw canvas render directly
@@ -320,9 +360,13 @@ export const OptimizedPreviewPlayer: React.FC<OptimizedPreviewPlayerProps> = mem
           <div
             className="relative flex items-center justify-center max-h-full max-w-full shadow-2xl rounded-xl overflow-hidden ring-1 ring-white/10"
             style={{
-              aspectRatio: aspectRatio.replace(':', ' / '),
-              height: aspectRatio === '16:9' ? 'auto' : '100%',
-              width: aspectRatio === '16:9' ? '100%' : 'auto',
+              aspectRatio:
+                aspectRatio === 'custom' && customDimensions
+                  ? `${customDimensions.width} / ${customDimensions.height}`
+                  : aspectRatio.replace(':', ' / '),
+              height: aspectRatio === '16:9' || aspectRatio === '21:9' ? 'auto' : '100%',
+              width: aspectRatio === '16:9' || aspectRatio === '21:9' ? '100%' : 'auto',
+              backgroundColor: backgroundColor || '#000000',
             }}
           >
             <canvas
@@ -332,7 +376,7 @@ export const OptimizedPreviewPlayer: React.FC<OptimizedPreviewPlayerProps> = mem
               onPointerDown={handleDrawingPointerDown}
               onPointerMove={handleDrawingPointerMove}
               onPointerUp={handleDrawingPointerUp}
-              className={`w-full h-full object-contain rounded-xl bg-black block ${
+              className={`w-full h-full object-contain rounded-xl block ${
                 isDrawingMode ? 'cursor-crosshair touch-none' : 'cursor-default'
               }`}
             />
@@ -364,10 +408,10 @@ export const OptimizedPreviewPlayer: React.FC<OptimizedPreviewPlayerProps> = mem
           {/* Timecode badge with direct DOM update */}
           <div className="absolute bottom-2 left-3 pointer-events-none flex items-center gap-1.5 font-mono-tabular text-xs bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10">
             <span ref={timecodeDisplayRef} className="text-amber-400 font-semibold">
-              {formatTimestamp(currentTimeRef.current)}
+              {formatTimecode(currentTimeRef.current, timecodeDisplay, frameRate)}
             </span>
             <span className="text-slate-500">/</span>
-            <span className="text-slate-300">{formatTimestamp(totalDuration)}</span>
+            <span className="text-slate-300">{formatTimecode(totalDuration, timecodeDisplay, frameRate)}</span>
           </div>
 
           {/* Active 3D or Drawing indicator badge */}

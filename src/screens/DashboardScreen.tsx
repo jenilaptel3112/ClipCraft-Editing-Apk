@@ -13,7 +13,9 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useProject } from '../context/ProjectContext';
-import { ProjectData } from '../types/editor';
+import { ProjectData, ProjectSettings } from '../types/editor';
+import { createDefaultProjectSettings } from '../utils/presets';
+import { ProjectSettingsModal } from '../components/ProjectSettingsModal';
 
 function formatTimeAgo(timestamp: number): string {
   const diffSec = Math.floor((Date.now() - timestamp) / 1000);
@@ -37,6 +39,7 @@ export const DashboardScreen: React.FC = () => {
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
   const [renameTitleInput, setRenameTitleInput] = useState('');
   const [deleteConfirmProject, setDeleteConfirmProject] = useState<ProjectData | null>(null);
+  const [settingsModalProject, setSettingsModalProject] = useState<ProjectData | null>(null);
 
   const startRename = (p: ProjectData) => {
     setRenamingProjectId(p.id);
@@ -77,10 +80,15 @@ export const DashboardScreen: React.FC = () => {
           </div>
 
           <button
-            className="w-8 h-8 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] active:scale-95 flex items-center justify-center text-slate-300 transition-all"
-            title="Settings"
+            onClick={() => {
+              if (projects.length > 0) {
+                setSettingsModalProject(projects[0]);
+              }
+            }}
+            className="w-8 h-8 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] active:scale-95 flex items-center justify-center text-slate-300 transition-all cursor-pointer"
+            title="Project Settings"
           >
-            <Settings className="w-4 h-4" />
+            <Settings className="w-4 h-4 text-amber-400" />
           </button>
         </div>
       </header>
@@ -166,9 +174,14 @@ export const DashboardScreen: React.FC = () => {
                     <Play className="w-4 h-4 fill-current ml-0.5 text-amber-400" />
                   </div>
 
-                  {/* Aspect Ratio Badge */}
-                  <div className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-black/60 backdrop-blur-md text-[10px] font-mono-tabular font-bold text-amber-400 border border-white/10">
-                    {project.aspectRatio}
+                  {/* Aspect Ratio & Resolution Tier Badges */}
+                  <div className="absolute top-2 left-2 flex items-center gap-1">
+                    <span className="px-2 py-0.5 rounded-lg bg-black/60 backdrop-blur-md text-[10px] font-mono-tabular font-bold text-amber-400 border border-white/10">
+                      {project.aspectRatio}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded-lg bg-black/60 backdrop-blur-md text-[10px] font-mono-tabular font-semibold text-slate-300 border border-white/10">
+                      {project.settings?.resolutionTier || '1080p'}
+                    </span>
                   </div>
 
                   {/* Duration Badge */}
@@ -234,6 +247,16 @@ export const DashboardScreen: React.FC = () => {
                     {/* Dropdown Menu */}
                     {activeMenuProjectId === project.id && (
                       <div className="absolute right-0 bottom-full mb-1 w-36 rounded-xl bg-[#1C1F2C] border border-white/10 shadow-2xl p-1 z-30 space-y-0.5">
+                        <button
+                          onClick={() => {
+                            setSettingsModalProject(project);
+                            setActiveMenuProjectId(null);
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg text-left text-xs font-medium text-slate-200 hover:bg-white/[0.08] flex items-center gap-2 cursor-pointer"
+                        >
+                          <Settings className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Settings</span>
+                        </button>
                         <button
                           onClick={() => startRename(project)}
                           className="w-full px-2.5 py-1.5 rounded-lg text-left text-xs font-medium text-slate-200 hover:bg-white/[0.08] flex items-center gap-2"
@@ -301,6 +324,26 @@ export const DashboardScreen: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Project Configuration Modal */}
+      {settingsModalProject && (
+        <ProjectSettingsModal
+          isOpen={Boolean(settingsModalProject)}
+          initialSettings={
+            settingsModalProject.settings ||
+            createDefaultProjectSettings(
+              settingsModalProject.id,
+              settingsModalProject.title,
+              settingsModalProject.aspectRatio
+            )
+          }
+          onClose={() => setSettingsModalProject(null)}
+          onSave={(updatedSettings) => {
+            renameProject(settingsModalProject.id, updatedSettings.name);
+            setSettingsModalProject(null);
+          }}
+        />
       )}
     </div>
   );

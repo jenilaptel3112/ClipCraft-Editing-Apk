@@ -75,6 +75,12 @@ export const PreviewPlayer: React.FC<PreviewPlayerProps> = ({
         return { width: 720, height: 720 };
       case '4:5':
         return { width: 720, height: 900 };
+      case '21:9':
+        return { width: 960, height: 411 };
+      case '4:3':
+        return { width: 720, height: 540 };
+      default:
+        return { width: 540, height: 960 };
     }
   }, [aspectRatio]);
 

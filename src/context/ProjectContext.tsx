@@ -1,6 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { ProjectData, AppScreen, AspectRatio, TimelineClip, TrackMeta } from '../types/editor';
-import { INITIAL_CLIPS, INITIAL_TRACKS } from '../utils/presets';
+import {
+  ProjectData,
+  ProjectSettings,
+  AppScreen,
+  AspectRatio,
+  TimelineClip,
+  TrackMeta,
+} from '../types/editor';
+import { INITIAL_CLIPS, INITIAL_TRACKS, createDefaultProjectSettings } from '../utils/presets';
 
 interface ProjectContextType {
   currentScreen: AppScreen;
@@ -9,15 +16,17 @@ interface ProjectContextType {
   activeProject: ProjectData | null;
   activeProjectId: string | null;
   createNewProject: (title?: string, aspectRatio?: AspectRatio, initialClips?: TimelineClip[]) => ProjectData;
+  createNewProjectWithSettings: (settings: Partial<ProjectSettings>, initialClips?: TimelineClip[]) => ProjectData;
   openProject: (projectId: string) => void;
   updateActiveProject: (updates: Partial<ProjectData>) => void;
+  updateActiveProjectSettings: (updates: Partial<ProjectSettings>) => void;
   duplicateProject: (projectId: string) => void;
   deleteProject: (projectId: string) => void;
   renameProject: (projectId: string, newTitle: string) => void;
   saveCurrentProjectState: () => void;
 }
 
-const STORAGE_KEY = 'clipcraft_studio_projects_v2';
+const STORAGE_KEY = 'clipcraft_studio_projects_v3';
 const ACTIVE_ID_KEY = 'clipcraft_active_project_id';
 
 const SAMPLE_PROJECTS: ProjectData[] = [
@@ -32,6 +41,19 @@ const SAMPLE_PROJECTS: ProjectData[] = [
     duration: 13.0,
     clips: INITIAL_CLIPS,
     tracks: INITIAL_TRACKS,
+    settings: {
+      id: 'sample-project-neon-horizon',
+      name: 'Neon Horizon Reel',
+      createdAt: Date.now() - 3600000 * 4,
+      lastModified: Date.now() - 3600000 * 2,
+      aspectRatio: '9:16',
+      resolutionTier: '1080p',
+      frameRate: 30,
+      sampleRate: 48000,
+      backgroundColor: '#000000',
+      backgroundBlurFallback: true,
+      timecodeDisplay: 'compact',
+    },
   },
   {
     id: 'sample-project-golden-hour',
@@ -47,6 +69,19 @@ const SAMPLE_PROJECTS: ProjectData[] = [
       startTime: i * 4.5,
     })),
     tracks: INITIAL_TRACKS,
+    settings: {
+      id: 'sample-project-golden-hour',
+      name: 'Golden Waves Cinematic',
+      createdAt: Date.now() - 3600000 * 24,
+      lastModified: Date.now() - 3600000 * 8,
+      aspectRatio: '16:9',
+      resolutionTier: '1080p',
+      frameRate: 24,
+      sampleRate: 48000,
+      backgroundColor: '#000000',
+      backgroundBlurFallback: true,
+      timecodeDisplay: 'hmsf',
+    },
   },
 ];
 
@@ -57,10 +92,16 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [projects, setProjects] = useState<ProjectData[]>(() => {
     if (typeof window === 'undefined') return SAMPLE_PROJECTS;
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('clipcraft_studio_projects_v2');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Hydrate any missing settings
+          return parsed.map((p: Partial<ProjectData> & { settings?: ProjectSettings }) => ({
+            ...p,
+            settings: p.settings || createDefaultProjectSettings(p.id, p.title, p.aspectRatio || '9:16'),
+          })) as ProjectData[];
+        }
       }
     } catch {
       // fallback
@@ -101,15 +142,47 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Update active project
   const updateActiveProject = useCallback((updates: Partial<ProjectData>) => {
     setProjects((prev) =>
-      prev.map((p) =>
-        p.id === activeProjectId
-          ? { ...p, ...updates, modifiedAt: Date.now() }
-          : p
-      )
+      prev.map((p) => {
+        if (p.id !== activeProjectId) return p;
+        const updated = { ...p, ...updates, modifiedAt: Date.now() };
+        if (updates.aspectRatio && updated.settings) {
+          updated.settings = { ...updated.settings, aspectRatio: updates.aspectRatio };
+        }
+        if (updates.title && updated.settings) {
+          updated.settings = { ...updated.settings, name: updates.title };
+        }
+        return updated;
+      })
     );
   }, [activeProjectId]);
 
-  // Create new project
+  // Update active project settings
+  const updateActiveProjectSettings = useCallback(
+    (updates: Partial<ProjectSettings>) => {
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id !== activeProjectId) return p;
+          const currentSettings = p.settings || createDefaultProjectSettings(p.id, p.title, p.aspectRatio);
+          const nextSettings: ProjectSettings = {
+            ...currentSettings,
+            ...updates,
+            lastModified: Date.now(),
+          };
+
+          return {
+            ...p,
+            title: nextSettings.name || p.title,
+            aspectRatio: nextSettings.aspectRatio || p.aspectRatio,
+            modifiedAt: Date.now(),
+            settings: nextSettings,
+          };
+        })
+      );
+    },
+    [activeProjectId]
+  );
+
+  // Create new project with basic params
   const createNewProject = useCallback(
     (
       title?: string,
@@ -121,9 +194,12 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         ? Math.max(...initialClips.map((c) => c.startTime + c.duration))
         : 13.0;
 
+      const projTitle = title || `Untitled Video ${projects.length + 1}`;
+      const settings = createDefaultProjectSettings(id, projTitle, aspectRatio);
+
       const newProject: ProjectData = {
         id,
-        title: title || `Untitled Video ${projects.length + 1}`,
+        title: projTitle,
         createdAt: Date.now(),
         modifiedAt: Date.now(),
         aspectRatio,
@@ -135,6 +211,50 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         duration: +defaultDuration.toFixed(1),
         clips: initialClips || INITIAL_CLIPS,
         tracks: INITIAL_TRACKS,
+        settings,
+      };
+
+      setProjects((prev) => [newProject, ...prev]);
+      setActiveProjectId(id);
+      setCurrentScreen('EDITOR_SCREEN');
+      return newProject;
+    },
+    [projects.length]
+  );
+
+  // Create new project with full ProjectSettings
+  const createNewProjectWithSettings = useCallback(
+    (
+      customSettings: Partial<ProjectSettings>,
+      initialClips?: TimelineClip[]
+    ): ProjectData => {
+      const id = customSettings.id || `proj-${Date.now()}`;
+      const projTitle = customSettings.name || `Project ${projects.length + 1}`;
+      const aspectRatio = customSettings.aspectRatio || '9:16';
+      const defaultDuration = initialClips && initialClips.length > 0
+        ? Math.max(...initialClips.map((c) => c.startTime + c.duration))
+        : 13.0;
+
+      const fullSettings: ProjectSettings = {
+        ...createDefaultProjectSettings(id, projTitle, aspectRatio),
+        ...customSettings,
+      };
+
+      const newProject: ProjectData = {
+        id,
+        title: projTitle,
+        createdAt: fullSettings.createdAt,
+        modifiedAt: fullSettings.lastModified,
+        aspectRatio,
+        fitMode: 'cover',
+        thumbnailGradient:
+          aspectRatio === '9:16'
+            ? 'from-blue-600 via-indigo-700 to-purple-900'
+            : 'from-amber-600 via-orange-700 to-slate-900',
+        duration: +defaultDuration.toFixed(1),
+        clips: initialClips || INITIAL_CLIPS,
+        tracks: INITIAL_TRACKS,
+        settings: fullSettings,
       };
 
       setProjects((prev) => [newProject, ...prev]);
@@ -150,12 +270,20 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     (projectId: string) => {
       const target = projects.find((p) => p.id === projectId);
       if (!target) return;
+      const newId = `proj-${Date.now()}`;
       const duplicated: ProjectData = {
         ...target,
-        id: `proj-${Date.now()}`,
+        id: newId,
         title: `${target.title} (Copy)`,
         createdAt: Date.now(),
         modifiedAt: Date.now(),
+        settings: {
+          ...target.settings,
+          id: newId,
+          name: `${target.title} (Copy)`,
+          createdAt: Date.now(),
+          lastModified: Date.now(),
+        },
       };
       setProjects((prev) => [duplicated, ...prev]);
     },
@@ -178,14 +306,19 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const renameProject = useCallback((projectId: string, newTitle: string) => {
     if (!newTitle.trim()) return;
     setProjects((prev) =>
-      prev.map((p) =>
-        p.id === projectId ? { ...p, title: newTitle.trim(), modifiedAt: Date.now() } : p
-      )
+      prev.map((p) => {
+        if (p.id !== projectId) return p;
+        return {
+          ...p,
+          title: newTitle.trim(),
+          modifiedAt: Date.now(),
+          settings: { ...p.settings, name: newTitle.trim(), lastModified: Date.now() },
+        };
+      })
     );
   }, []);
 
   const saveCurrentProjectState = useCallback(() => {
-    // Force sync
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
     } catch {}
@@ -200,8 +333,10 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         activeProject,
         activeProjectId,
         createNewProject,
+        createNewProjectWithSettings,
         openProject,
         updateActiveProject,
+        updateActiveProjectSettings,
         duplicateProject,
         deleteProject,
         renameProject,

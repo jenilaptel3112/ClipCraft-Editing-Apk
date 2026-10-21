@@ -13,8 +13,8 @@ import {
   SkipBack,
   SkipForward,
 } from 'lucide-react';
-import { TimelineClip } from '../types/editor';
-import { formatTimestamp } from '../utils/presets';
+import { TimelineClip, TimecodeDisplayMode, ProjectFrameRate } from '../types/editor';
+import { formatTimestamp, formatTimecode } from '../utils/presets';
 
 interface TimelineItemProps {
   clip: TimelineClip;
@@ -181,6 +181,8 @@ interface TimelineViewProps {
   selectedClipId: string | null;
   isPlaying?: boolean;
   currentTime?: number;
+  timecodeDisplay?: TimecodeDisplayMode;
+  frameRate?: ProjectFrameRate;
   onSelectClip: (clipId: string | null) => void;
   onSeek: (time: number, isScrubbing: boolean) => void;
   onUpdateClipTiming: (
@@ -199,6 +201,8 @@ export const TimelineView: React.FC<TimelineViewProps> = memo(
     selectedClipId,
     isPlaying = false,
     currentTime = 0,
+    timecodeDisplay = 'compact',
+    frameRate = 30,
     onSelectClip,
     onSeek,
     onUpdateClipTiming,
@@ -267,10 +271,10 @@ export const TimelineView: React.FC<TimelineViewProps> = memo(
         container.scrollLeft = targetScroll;
 
         if (timeDisplayRef.current) {
-          timeDisplayRef.current.textContent = formatTimestamp(time);
+          timeDisplayRef.current.textContent = formatTimecode(time, timecodeDisplay, frameRate);
         }
       },
-      [pxPerSec]
+      [pxPerSec, timecodeDisplay, frameRate]
     );
 
     useEffect(() => {
@@ -286,7 +290,7 @@ export const TimelineView: React.FC<TimelineViewProps> = memo(
         isProgrammaticScrollRef.current = true;
         container.scrollLeft = currentTime * pxPerSec;
         if (timeDisplayRef.current) {
-          timeDisplayRef.current.textContent = formatTimestamp(currentTime);
+          timeDisplayRef.current.textContent = formatTimecode(currentTime, timecodeDisplay, frameRate);
         }
       }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -309,7 +313,7 @@ export const TimelineView: React.FC<TimelineViewProps> = memo(
 
       // Update header timecode badge in real-time
       if (timeDisplayRef.current) {
-        timeDisplayRef.current.textContent = formatTimestamp(clampedTime);
+        timeDisplayRef.current.textContent = formatTimecode(clampedTime, timecodeDisplay, frameRate);
       }
 
       // Notify parent with isScrubbing = true
@@ -469,7 +473,7 @@ export const TimelineView: React.FC<TimelineViewProps> = memo(
         scrollContainerRef.current.scrollLeft = 0;
         onSeek(0, false);
         if (timeDisplayRef.current) {
-          timeDisplayRef.current.textContent = formatTimestamp(0);
+          timeDisplayRef.current.textContent = formatTimecode(0, timecodeDisplay, frameRate);
         }
       }
     };
@@ -481,7 +485,7 @@ export const TimelineView: React.FC<TimelineViewProps> = memo(
         scrollContainerRef.current.scrollLeft = endScroll;
         onSeek(totalDuration, false);
         if (timeDisplayRef.current) {
-          timeDisplayRef.current.textContent = formatTimestamp(totalDuration);
+          timeDisplayRef.current.textContent = formatTimecode(totalDuration, timecodeDisplay, frameRate);
         }
       }
     };
@@ -504,14 +508,14 @@ export const TimelineView: React.FC<TimelineViewProps> = memo(
           <div className="flex items-center gap-1.5">
             <button
               onClick={handleJumpToStart}
-              className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/[0.06] active:scale-95 transition-all"
-              title="Jump to Start (00:00.00)"
+              className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/[0.06] active:scale-95 transition-all cursor-pointer"
+              title="Jump to Start"
             >
               <SkipBack className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={handleJumpToEnd}
-              className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/[0.06] active:scale-95 transition-all"
+              className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/[0.06] active:scale-95 transition-all cursor-pointer"
               title="Jump to End"
             >
               <SkipForward className="w-3.5 h-3.5" />
@@ -524,17 +528,22 @@ export const TimelineView: React.FC<TimelineViewProps> = memo(
               ref={timeDisplayRef}
               className="text-amber-400 font-bold text-xs tracking-wide"
             >
-              {formatTimestamp(currentTime)}
+              {formatTimecode(currentTime, timecodeDisplay, frameRate)}
             </span>
             <span className="text-slate-600 text-[11px]">/</span>
             <span className="text-slate-400 text-xs">
-              {formatTimestamp(totalDuration)}
+              {formatTimecode(totalDuration, timecodeDisplay, frameRate)}
             </span>
           </div>
 
-          <div className="flex items-center gap-1 text-[10px] text-slate-500 font-medium">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-            <span>Center Playhead</span>
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium">
+            <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.06] font-mono-tabular text-amber-300 font-bold">
+              {frameRate} FPS
+            </span>
+            <div className="flex items-center gap-1 text-slate-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              <span>Center</span>
+            </div>
           </div>
         </div>
 
